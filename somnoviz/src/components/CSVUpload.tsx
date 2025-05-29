@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Papa from "papaparse";
+import { useData } from "../context/DataContext";
 
 type ParsedData = string[][];
 
@@ -58,26 +59,27 @@ export default function CSVUpload() {
 
             {/*Preview Area*/}
             {csvData.length > 0 && (
-                <div className="mt-6">
-                    <h2 className="text-xl font-semibold mb-4">CSV Data Preview: {fileName}</h2>
-                    <table className="min-w-full bg-white border border-gray-200">
-                        <thead>
-                            <tr>
-                                {csvData[0].map((header, index) => (
-                                    <th key={index} className="border px-4 py-2">{header}</th>
-                                ))}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {csvData.slice(1).map((row, rowIndex) => (
-                                <tr key={rowIndex}>
-                                    {row.map((cell, cellIndex) => (
-                                        <td key={cellIndex} className="border px-4 py-2">{cell}</td>
-                                    ))}
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                <div className="mt-6 overflow-x-auto max-h-96">
+                <p className="font-semibold mb-2">Preview: {fileName}</p>
+                <table className="table-auto border border-gray-300 w-full text-sm">
+                    <thead>
+                    <tr>
+                        {csvData[0].map((col, idx) => (
+                        <th key={idx} className="border px-2 py-1 bg-gray-200">{col}</th>
+                        ))}
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {csvData.slice(1, 6).map((row, i) => (
+                        <tr key={i}>
+                        {row.map((cell, j) => (
+                            <
+                                td key={j} className="border px-2 py-1">{cell}</td>
+                        ))}
+                        </tr>
+                    ))}
+                    </tbody>
+                </table>
                 </div>
             )}
         </div>
