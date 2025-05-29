@@ -9,16 +9,26 @@ interface DataContextType {
     setCsvData: (data: CSVData) => void;
     fileName: string | null;
     setFileName: (name: string | null) => void;
+    selectedColumns?: SelectedColumns;
+    setSelectedColumns?: (columns: SelectedColumns) => void;
 }
 
+interface SelectedColumns {
+    time?: string;
+    variables: string[];
+}
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
 export const DataProvider = ({ children }: { children: ReactNode }) => {
     const [csvData, setcsvData] = useState<CSVData>([]);
     const [fileName, setFileName] = useState<string | null>(null);
+    const [selectedColumns, setSelectedColumns] = useState<SelectedColumns>({
+        time: undefined,
+        variables: [],
+    });
 
     return(
-        <DataContext.Provider value={{ csvData, setCsvData: setcsvData, fileName, setFileName }}>
+        <DataContext.Provider value={{ csvData, setCsvData: setcsvData, fileName, setFileName, selectedColumns: selectedColumns, setSelectedColumns }}>
             {children}
         </DataContext.Provider>
     )

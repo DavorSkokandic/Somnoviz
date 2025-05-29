@@ -1,9 +1,23 @@
 import CSVUpload from "../components/CSVUpload";
+import ColumnSelector from "../components/ColumnSelector";
+import { Upload } from "lucide-react";
 
 export default function Home() {
   return (
-    <div className="max-w-4xl mx-auto">
-      <CSVUpload />
+    <div className="min-h-screen w-full bg-gradient-to-br from-blue-50 to-blue-200 flex items-center justify-center px-4">
+      <div className="w-full max-w-4xl bg-white shadow-xl rounded-2xl p-10">
+        {/* Naslov */}
+        <div className="text-center mb-10">
+          <h1 className="text-4xl font-bold text-gray-800 flex justify-center items-center gap-3">
+            <img src="/icon.svg" alt="Logo" className="w-10 h-10" />
+            Analiza Polisomnografskih Podataka
+          </h1>
+          <p className="text-gray-500 mt-2">
+            Učitaj CSV zapis cjelonoćnog polisomnografa i istraži podatke interaktivno.
+          </p>
+          <CSVUpload />
+        </div>
+      </div>
     </div>
   );
 }
