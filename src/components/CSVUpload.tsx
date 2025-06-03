@@ -1,16 +1,21 @@
 import { useState } from "react";
 import Papa from "papaparse";
-import { Upload } from "lucide-react"; // ikona
-import { useData } from "../context/DataContext";
+import { Upload } from "lucide-react";
+import axios from "axios";
+//import { useData } from "../context/DataContext";
 
 type ParsedData = string[][];
 
 export default function CSVUpload() {
   const [csvData, setCsvData] = useState<ParsedData>([]);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadSuccess, setUploadSuccess] = useState<boolean | null>(null);
 
   const handleFileUpload = (file: File) => {
     setFileName(file.name);
+
+    // Prvo parsiramo lokalno za prikaz
     Papa.parse(file, {
       header: false,
       skipEmptyLines: true,
@@ -21,6 +26,25 @@ export default function CSVUpload() {
         console.error("Error parsing CSV file:", error);
       },
     });
+
+    // Zatim šaljemo backendu
+    const formData = new FormData();
+    formData.append("file", file);
+
+    setUploading(true);
+    axios
+      .post("http://localhost:5000/api/upload", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      })
+      .then((res) => {
+        console.log("Upload successful:", res.data);
+        setUploadSuccess(true);
+      })
+      .catch((err) => {
+        console.error("Upload error:", err);
+        setUploadSuccess(false);
+      })
+      .finally(() => setUploading(false));
   };
 
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
@@ -60,9 +84,18 @@ export default function CSVUpload() {
             }
           }}
         />
-       
       </div>
-      
+
+      {/* Status poruke */}
+      <div className="mt-4 text-center">
+        {uploading && <p className="text-blue-600">Učitavanje...</p>}
+        {uploadSuccess === true && (
+          <p className="text-green-600">Uspješno učitano na server ✅</p>
+        )}
+        {uploadSuccess === false && (
+          <p className="text-red-600">Greška pri učitavanju na server ❌</p>
+        )}
+      </div>
 
       {/* Pregled CSV podataka */}
       {csvData.length > 0 && (
