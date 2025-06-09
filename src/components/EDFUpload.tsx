@@ -12,8 +12,21 @@ import {
   Tooltip,
   Legend,
 } from "chart.js";
-
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+import zoomPlugin from "chartjs-plugin-zoom";
+import "chartjs-adapter-date-fns";
+import { enUS } from 'date-fns/locale';
+import { registerables } from 'chart.js';
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  zoomPlugin,
+  ...registerables
+);
 
 type EDFFileInfo = {
   channels: string[];
@@ -25,13 +38,10 @@ type EDFFileInfo = {
   previewData: { [channel: string]: number[] };
 };
 
-function formatTime(startTime: string, offsetSeconds: number) {
-  // Pretvaranje ISO stringa u Date objekt
-  const date = new Date(startTime);
-  if (isNaN(date.getTime())) return "";
-  const newDate = new Date(date.getTime() + offsetSeconds * 1000);
-  // Format HH:mm:ss
-  return newDate.toLocaleTimeString("hr-HR");
+// Formatiranje vremena
+function addSeconds(date: Date, seconds: number): Date {
+  const newDate = new Date(date.getTime() + seconds * 1000);
+  return newDate;
 }
 
 function mean(arr: number[]) {
@@ -102,9 +112,14 @@ export default function EDFUpload() {
   const chartData = useMemo(() => {
     if (!selectedChannel || !fileInfo) return { labels: [], datasets: [] };
     const dataArr = fileInfo.previewData[selectedChannel] || [];
-    const labels = dataArr.map((_, i) =>
-      formatTime(fileInfo.startTime, i / fileInfo.sampleRate)
-    );
+    const startTime = new Date(fileInfo.startTime);
+     if (isNaN(startTime.getTime())) return { labels: [], datasets: [] };
+
+    const labels = dataArr.map((_, i) => {
+      const newDate = addSeconds(startTime, i / fileInfo.sampleRate);
+      return newDate;
+    });
+
     return {
       labels,
       datasets: [
@@ -113,6 +128,7 @@ export default function EDFUpload() {
           data: dataArr,
           borderColor: "rgb(59, 130, 246)",
           backgroundColor: "rgba(59, 130, 246, 0.5)",
+          tension: 0.4,
         },
       ],
     };
@@ -259,13 +275,24 @@ export default function EDFUpload() {
                     maintainAspectRatio: false,
                     scales: {
                       x: {
+                        type: 'time',
+                        time: {
+                            unit: 'second',
+                            displayFormats: {
+                                second: 'HH:mm:ss',
+                                minute: 'HH:mm',
+                                hour: 'HH',
+                                day: 'MM-DD',
+                            },
+                        },
+                        adapters: {
+                          date: {
+                            locale: enUS,
+                          }
+                        },
                         title: {
                           display: true,
                           text: "Vrijeme",
-                        },
-                        ticks: {
-                          autoSkip: true,
-                          maxTicksLimit: 10,
                         },
                       },
                       y: {
@@ -278,10 +305,25 @@ export default function EDFUpload() {
                     plugins: {
                       tooltip: {
                         callbacks: {
-                          title: (items) => items.map(item => item.label || "").join(", "),
+                          title: (items) => {
+                            const date = new Date(items[0].label);
+                            return date.toLocaleTimeString();
+                          }
+                        }
+                      },
+                      
+                      zoom: {
+                        zoom: {
+                          wheel: {
+                            enabled: true,
+                          },
+                          pinch: {
+                            enabled: true
+                          },
+                          mode: 'x',
                         }
                       }
-                    }
+                    },
                   }}
                 />
               </div>
