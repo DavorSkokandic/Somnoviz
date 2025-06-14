@@ -1,4 +1,5 @@
 import { useRef, useState, useMemo, useEffect, useCallback } from "react";
+import { useDebouncedCallback } from "use-debounce";
 import { FaUpload, FaInfoCircle, FaHeartbeat, FaClock, FaWaveSquare } from "react-icons/fa";
 import axios from "axios";
 import { Line } from "react-chartjs-2";
@@ -73,21 +74,9 @@ function stddev(arr: number[]): number {
 
 // Debounce funkcija - vraća debouncanu verziju funkcije
 // Prilagođena da može primiti async funkcije, ali sama ne vraća Promise
-function debounce<T extends (...args: Parameters<T>) => Promise<unknown>>(func: T, delay: number): (...args: Parameters<T>) => Promise<void> {
-  let timeout: ReturnType<typeof setTimeout> | null = null;
 
-  return (...args: Parameters<T>): Promise<void> => {
-    return new Promise((resolve) => {
-      if (timeout) {
-        clearTimeout(timeout);
-      }
 
-      timeout = setTimeout(() => {
-        func(...args).then(() => resolve()); // Resolve nakon što se funkcija izvrši
-      }, delay);
-    });
-  };
-}
+
 
 export default function EDFUpload() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -95,6 +84,7 @@ export default function EDFUpload() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
+  //const [isZooming, setIsZooming] = useState(false);
 
   // Stanja za upravljanje prikazanim podacima i zumiranjem
   const [chartDataState, setChartDataState] = useState<{ labels: Date[]; data: number[]; } | null>(null);
@@ -145,12 +135,36 @@ export default function EDFUpload() {
 
   // Debouncana verzija funkcije za dohvaćanje chunkova
   // useMemo osigurava da se debouncana funkcija stvara samo kada se promijeni fetchEdfChunkInternal.
-  const debouncedFetchEdfChunk = useMemo(
-    () => debounce(fetchEdfChunkInternal, 300),
-    [fetchEdfChunkInternal]
+  const debouncedFetchEdfChunk = useDebouncedCallback(
+  (
+    filePath: string,
+    channel: string,
+    startSample: number,
+    numSamples: number,
+    sampleRate: number
+  ) => {
+    fetchEdfChunkInternal(filePath, channel, startSample, numSamples, sampleRate);
+  },
+  300
+);
+
+const handleFullNightView = useCallback(() => {
+  if (!fileInfo || !selectedChannel) return;
+  
+  const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
+  const totalSamples = fileInfo.duration * sampleRate;
+  
+  // Auto-downsample ako ima više od 100k uzoraka 
+  const downsampleFactor = totalSamples > 100000 ? 100 : 1;
+  
+  debouncedFetchEdfChunk(
+    fileInfo.tempFilePath,
+    selectedChannel,
+    0,
+    Math.floor(totalSamples / downsampleFactor),
+    sampleRate
   );
-
-
+}, [fileInfo, selectedChannel, debouncedFetchEdfChunk]);
   const handleFileUpload = async (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -206,11 +220,11 @@ export default function EDFUpload() {
   const handleClick = () => {
     fileInputRef.current?.click();
   };
-
+  //const debouncedFetchEdfChunkRef = useRef(debounce(fetchEdfChunkInternal, 300));
   // Učitaj nove podatke samo kada se promijeni fajl (fileInfo) ili odabrani kanal (selectedChannel)
   // Uklonili smo 'chartDataState?.data' iz zavisnosti da spriječimo konstantno re-renderiranje
   // jer chartDataState ažurira unutar fetchEdfChunkInternal, što bi stvorilo petlju.
-  useEffect(() => {
+   useEffect(() => {
     if (!fileInfo || !selectedChannel) return;
 
     const currentSampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
@@ -241,6 +255,32 @@ export default function EDFUpload() {
       ],
     };
   }, [chartDataState, selectedChannel]);
+  const handleZoomOrPan = useCallback((startSample: number, endSample: number) => {
+  if (!fileInfo || !selectedChannel) return;
+  
+  const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
+  const numSamples = endSample - startSample;
+  
+  // Downsample za velike rangeove
+  if (numSamples > 100000) {
+    const downsampledSamples = Math.floor(numSamples / 100);
+    debouncedFetchEdfChunk(
+      fileInfo.tempFilePath,
+      selectedChannel,
+      startSample,
+      downsampledSamples,
+      sampleRate
+    );
+  } else {
+    debouncedFetchEdfChunk(
+      fileInfo.tempFilePath,
+      selectedChannel,
+      startSample,
+      numSamples,
+      sampleRate
+    );
+  }
+}, [fileInfo, selectedChannel, debouncedFetchEdfChunk]);
 
 
   // Chart.js opcije s prilagođenom logikom zooma
@@ -328,7 +368,7 @@ export default function EDFUpload() {
               const fetchStartSample = Math.max(0, newStartSample - buffer);
               const fetchEndSample = Math.min(totalSamples, newEndSample + buffer);
               let fetchNumSamples = fetchEndSample - fetchStartSample;
-
+              handleZoomOrPan(xScale.min, xScale.max);
               if (fetchStartSample + fetchNumSamples > totalSamples) {
                 fetchNumSamples = totalSamples - fetchStartSample;
               }
@@ -365,7 +405,7 @@ export default function EDFUpload() {
               const fetchStartSample = Math.max(0, newStartSample);
               const fetchEndSample = Math.min(totalSamples, newEndSample);
               const fetchNumSamples = fetchEndSample - fetchStartSample;
-              
+              handleZoomOrPan(xScale.min, xScale.max)
               if (fileInfo.tempFilePath && selectedChannel && fetchNumSamples > 0 && sampleRate &&
                 (fetchStartSample !== currentZoomStart || fetchNumSamples !== (currentZoomEnd - currentZoomStart))) {
                   debouncedFetchEdfChunk(fileInfo.tempFilePath, selectedChannel, fetchStartSample, fetchNumSamples, sampleRate);
@@ -375,7 +415,7 @@ export default function EDFUpload() {
         }
       },
     };
-  }, [fileInfo, selectedChannel, debouncedFetchEdfChunk, chartDataState, currentZoomStart, currentZoomEnd]);
+  }, [fileInfo, selectedChannel, debouncedFetchEdfChunk, chartDataState, currentZoomStart, currentZoomEnd,handleZoomOrPan]);
 
 
   // Ažuriranje statistike za odabrani kanal (sada na temelju dohvaćenih podataka)
@@ -474,8 +514,8 @@ export default function EDFUpload() {
           </div>
 
           {/* Detaljne informacije i graf */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-white rounded-lg shadow p-6">
+         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/*<div className="bg-white rounded-lg shadow p-6">
               <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
                 <FaInfoCircle className="w-5 h-5 text-gray-600" />
                 Metapodaci
@@ -490,7 +530,7 @@ export default function EDFUpload() {
                   <dd className="font-medium">{fileInfo.recordingInfo}</dd>
                 </div>
               </dl>
-            </div>
+            </div>*/}
 
             <div className="bg-white rounded-lg shadow p-6">
               <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
@@ -503,7 +543,7 @@ export default function EDFUpload() {
                 className="w-full p-2 border rounded-md mb-4"
               >
                 {fileInfo.channels.map((channel, index) => (
-                <option key={`${channel}-${index}`} value={channel}>
+                <option key={`${channel}-${index}`} value={channel}>{channel}
                 {channel}
                 </option>
                 ))}
@@ -521,6 +561,12 @@ export default function EDFUpload() {
               )}
 
               <div className="h-64 relative">
+                <button 
+                  onClick={handleFullNightView}
+                  className="bg-blue-500 text-white px-4 py-2 rounded-lg mt-4 hover:bg-blue-600"
+                >
+                  Pregled cijele snimke
+                </button>
                 {isLoadingChunk && (
                     <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 z-20 rounded-lg">
                         <FaHeartbeat className="w-10 h-10 animate-pulse text-blue-500" />
@@ -540,3 +586,5 @@ export default function EDFUpload() {
     </div>
   );
 }
+
+
