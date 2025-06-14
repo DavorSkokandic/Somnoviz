@@ -514,73 +514,65 @@ const handleFullNightView = useCallback(() => {
           </div>
 
           {/* Detaljne informacije i graf */}
-         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/*<div className="bg-white rounded-lg shadow p-6">
-              <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                <FaInfoCircle className="w-5 h-5 text-gray-600" />
-                Metapodaci
-              </h3>
-              <dl className="space-y-3">
-                <div>
-                  <dt className="text-sm text-gray-500">Pacijent</dt>
-                  <dd className="font-medium">{fileInfo.patientInfo}</dd>
-                </div>
-                <div>
-                  <dt className="text-sm text-gray-500">Snimanje</dt>
-                  <dd className="font-medium">{fileInfo.recordingInfo}</dd>
-                </div>
-              </dl>
-            </div>*/}
+         <div className="space-y-6">
+          {/* Select i statistike */}
+          <div className="bg-white rounded-xl shadow p-6">
+            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
+              <FaWaveSquare className="w-5 h-5 text-gray-600" />
+              Odabrani kanal
+            </h3>
 
-            <div className="bg-white rounded-lg shadow p-6">
-              <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                <FaWaveSquare className="w-5 h-5 text-gray-600" />
-                Odabrani kanal
-              </h3>
-              <select
-                value={selectedChannel || ""}
-                onChange={(e) => setSelectedChannel(e.target.value)}
-                className="w-full p-2 border rounded-md mb-4"
-              >
-                {fileInfo.channels.map((channel, index) => (
-                <option key={`${channel}-${index}`} value={channel}>{channel}
-                {channel}
+            <select
+              value={selectedChannel || ""}
+              onChange={(e) => setSelectedChannel(e.target.value)}
+              className="w-full p-2 border rounded-md mb-4"
+            >
+              {fileInfo.channels.map((channel, index) => (
+                <option key={`${channel}-${index}`} value={channel}>
+                  {channel}
                 </option>
-                ))}
-              </select>
+              ))}
+            </select>
 
-              {/* Statistika */}
-              {channelStats && (
-                <div className="mb-4 text-sm bg-gray-50 p-3 rounded">
-                  <div><b>Prosjek:</b> {channelStats.mean.toFixed(4)}</div>
-                  <div><b>Medijan:</b> {channelStats.median.toFixed(4)}</div>
-                  <div><b>Min:</b> {channelStats.min.toFixed(4)}</div>
-                  <div><b>Max:</b> {channelStats.max.toFixed(4)}</div>
-                  <div><b>Std dev:</b> {channelStats.stddev.toFixed(4)}</div>
+            {/* Statistika */}
+            {channelStats && (
+              <div className="mb-4 text-sm bg-gray-50 p-4 rounded-lg grid grid-cols-2 sm:grid-cols-3 gap-4">
+                <div><b>Prosjek:</b> {channelStats.mean.toFixed(4)}</div>
+                <div><b>Medijan:</b> {channelStats.median.toFixed(4)}</div>
+                <div><b>Min:</b> {channelStats.min.toFixed(4)}</div>
+                <div><b>Max:</b> {channelStats.max.toFixed(4)}</div>
+                <div><b>Std dev:</b> {channelStats.stddev.toFixed(4)}</div>
+              </div>
+            )}
+          </div>
+
+          {/* Graf na cijeloj širini */}
+          <div className="bg-white rounded-xl shadow p-4">
+            <div className="flex justify-between items-center mb-4">
+              <h4 className="text-lg font-medium">Signalni graf</h4>
+              <button
+                onClick={handleFullNightView}
+                className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600"
+              >
+                Pregled cijele snimke
+              </button>
+            </div>
+
+            <div className="relative h-[500px] w-full">
+              {isLoadingChunk && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 z-10 rounded-lg">
+                  <FaHeartbeat className="w-8 h-8 animate-pulse text-blue-500" />
+                  <span className="ml-2 text-blue-700">Učitavanje...</span>
                 </div>
               )}
-
-              <div className="h-64 relative">
-                <button 
-                  onClick={handleFullNightView}
-                  className="bg-blue-500 text-white px-4 py-2 rounded-lg mt-4 hover:bg-blue-600"
-                >
-                  Pregled cijele snimke
-                </button>
-                {isLoadingChunk && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 z-20 rounded-lg">
-                        <FaHeartbeat className="w-10 h-10 animate-pulse text-blue-500" />
-                        <span className="ml-2 text-blue-700">Učitavanje...</span>
-                    </div>
-                )}
-                <Line
-                  ref={chartRef}
-                  data={chartJSData}
-                  options={chartOptions}
-                />
-              </div>
+              <Line
+                ref={chartRef}
+                data={chartJSData}
+                options={chartOptions}
+              />
             </div>
           </div>
+        </div>
         </div>
       )}
     </div>
