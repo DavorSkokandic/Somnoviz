@@ -21,6 +21,7 @@ import "chartjs-adapter-date-fns";
 import { enUS } from 'date-fns/locale';
 import { registerables } from 'chart.js';
 
+
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -101,7 +102,8 @@ export default function EDFUpload() {
     channel: string,
     startSample: number,
     numSamples: number,
-    sampleRate: number // Dodajte sampleRate kao argument
+    sampleRate: number, // Dodajte sampleRate kao argument
+    maxPoints: number = 2000 // Maksimalan broj uzoraka za dohvaćanje
   ):Promise<void> => {
     if (isLoadingChunk) return;
     setIsLoadingChunk(true);
@@ -109,7 +111,7 @@ export default function EDFUpload() {
 
     try {
       const response = await axios.get<{ data: number[] }>(
-        `http://localhost:5000/api/upload/edf-chunk?filePath=${encodeURIComponent(filePath)}&channel=${encodeURIComponent(channel)}&start_sample=${startSample}&num_samples=${numSamples}`
+        `http://localhost:5000/api/upload/edf-chunk?filePath=${encodeURIComponent(filePath)}&channel=${encodeURIComponent(channel)}&start_sample=${startSample}&num_samples=${numSamples}&max_points=${maxPoints}`,
       );
 
       const chunkData = response.data.data;
@@ -141,9 +143,10 @@ export default function EDFUpload() {
     channel: string,
     startSample: number,
     numSamples: number,
-    sampleRate: number
+    sampleRate: number,
+    maxPoints: number = 2000 // Maksimalan broj uzoraka za dohvaćanje
   ) => {
-    fetchEdfChunkInternal(filePath, channel, startSample, numSamples, sampleRate);
+    fetchEdfChunkInternal(filePath, channel, startSample, numSamples, sampleRate,maxPoints);
   },
   300
 );
@@ -162,7 +165,7 @@ const handleFullNightView = useCallback(() => {
     selectedChannel,
     0,
     Math.floor(totalSamples / downsampleFactor),
-    sampleRate
+    sampleRate,
   );
 }, [fileInfo, selectedChannel, debouncedFetchEdfChunk]);
   const handleFileUpload = async (file: File) => {
@@ -229,9 +232,10 @@ const handleFullNightView = useCallback(() => {
 
     const currentSampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
     const initialNumSamples = fileInfo.previewData[selectedChannel]?.length || 500;
+    const maxPoints = 2000; // Maksimalan broj uzoraka za dohvaćanje
 
     if (fileInfo.tempFilePath && selectedChannel && currentSampleRate) {
-        debouncedFetchEdfChunk(fileInfo.tempFilePath, selectedChannel, 0, initialNumSamples, currentSampleRate);
+        debouncedFetchEdfChunk(fileInfo.tempFilePath, selectedChannel, 0, initialNumSamples, currentSampleRate, maxPoints);
     }
   }, [selectedChannel, fileInfo, debouncedFetchEdfChunk]);
 
@@ -260,6 +264,9 @@ const handleFullNightView = useCallback(() => {
   
   const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
   const numSamples = endSample - startSample;
+
+  const chartWidth = chartRef.current?.width || 0;
+  const maxPoints= chartWidth*2;
   
   // Downsample za velike rangeove
   if (numSamples > 100000) {
@@ -269,7 +276,8 @@ const handleFullNightView = useCallback(() => {
       selectedChannel,
       startSample,
       downsampledSamples,
-      sampleRate
+      sampleRate,
+      maxPoints 
     );
   } else {
     debouncedFetchEdfChunk(
@@ -277,7 +285,8 @@ const handleFullNightView = useCallback(() => {
       selectedChannel,
       startSample,
       numSamples,
-      sampleRate
+      sampleRate,
+      maxPoints
     );
   }
 }, [fileInfo, selectedChannel, debouncedFetchEdfChunk]);
@@ -549,7 +558,7 @@ const handleFullNightView = useCallback(() => {
           {/* Graf na cijeloj širini */}
           <div className="bg-white rounded-xl shadow p-4">
             <div className="flex justify-between items-center mb-4">
-              <h4 className="text-lg font-medium">Signalni graf</h4>
+              <h4 className="text-lg font-medium"></h4>
               <button
                 onClick={handleFullNightView}
                 className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600"
