@@ -73,8 +73,7 @@ function stddev(arr: number[]): number {
   return Math.sqrt(mean(arr.map((x) => (x - m) ** 2)));
 }
 
-// Debounce funkcija - vraća debouncanu verziju funkcije
-// Prilagođena da može primiti async funkcije, ali sama ne vraća Promise
+
 
 
 
@@ -239,26 +238,36 @@ const handleFullNightView = useCallback(() => {
     }
   }, [selectedChannel, fileInfo, debouncedFetchEdfChunk]);
 
+const spo2Threshold = 90;
+const isSpo2 = selectedChannel?.toLowerCase().includes("spo2");
 
-  // Ovdje koristimo chartDataState za podatke grafa
-  const chartJSData = useMemo(() => {
-    if (!chartDataState || !selectedChannel) return { labels: [], datasets: [] };
-    
-    return {
-      labels: chartDataState.labels,
-      datasets: [
-        {
-          label: selectedChannel,
-          data: chartDataState.data,
-          borderColor: "rgb(59, 130, 246)",
-          backgroundColor: "rgba(59, 130, 246, 0.5)",
-          tension: 0.4,
-          pointRadius: 0, // Uklonite točke za bolje performanse
-          borderWidth: 1, // Tanja linija
-        },
-      ],
-    };
-  }, [chartDataState, selectedChannel]);
+// Generiraj boje za točke ako je SpO2 kanal
+const pointColors = useMemo(() => {
+  if (!isSpo2 || !chartDataState?.data) return [];
+  return chartDataState.data.map(value =>
+    value < spo2Threshold ? "red" : "blue"
+  );
+}, [chartDataState, isSpo2]);
+
+const chartJSData = useMemo(() => {
+  if (!chartDataState || !selectedChannel) return { labels: [], datasets: [] };
+
+  return {
+    labels: chartDataState.labels,
+    datasets: [
+      {
+        label: selectedChannel,
+        data: chartDataState.data,
+        borderColor: "rgb(59, 130, 246)",
+        backgroundColor: "rgba(59, 130, 246, 0.2)",
+        tension: 0.4,
+        pointRadius: isSpo2 ? 3 : 0,
+        pointBackgroundColor: isSpo2 ? pointColors : undefined,
+        borderWidth: 1,
+      },
+    ],
+  };
+}, [chartDataState, selectedChannel, isSpo2, pointColors]);
   const handleZoomOrPan = useCallback((startSample: number, endSample: number) => {
   if (!fileInfo || !selectedChannel) return;
   
@@ -440,6 +449,40 @@ const handleFullNightView = useCallback(() => {
     };
   }, [selectedChannel, chartDataState]);
 
+  // Dodaj na vrh komponente
+const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasElement, MouseEvent>) => {
+  if (!chartRef.current || !fileInfo || !selectedChannel) return;
+  const chart = chartRef.current;
+  const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
+  const totalSamples = Math.floor(fileInfo.duration * sampleRate);
+
+  // Dohvati X koordinatu klika
+  const points = chart.getElementsAtEventForMode(event.nativeEvent, 'nearest', { intersect: false }, false);
+  if (!points.length) return;
+  const firstPoint = points[0];
+  const dataIndex = firstPoint.index;
+
+  // Izračunaj vrijeme (ili sample) oko kojeg se zumira
+  const zoomSeconds = 200; // npr. 30 sekundi interval
+  const centerSample = currentZoomStart + dataIndex;
+  const startSample = Math.max(0, centerSample - Math.floor(zoomSeconds * sampleRate / 2));
+  const endSample = Math.min(totalSamples, centerSample + Math.floor(zoomSeconds * sampleRate / 2));
+  const numSamples = endSample - startSample;
+
+  // Pozovi fetch za taj raspon (koristi debouncedFetchEdfChunk)
+  const chartWidth = chart.width || 800;
+  const maxPoints = chartWidth * 2;
+  debouncedFetchEdfChunk(
+    fileInfo.tempFilePath,
+    selectedChannel,
+    startSample,
+    numSamples,
+    sampleRate,
+    maxPoints
+  );
+}, [chartRef, fileInfo, selectedChannel, currentZoomStart, debouncedFetchEdfChunk]);
+
+
 
   return (
     <div className="w-full max-w-4xl mx-auto p-4">
@@ -578,6 +621,8 @@ const handleFullNightView = useCallback(() => {
                 ref={chartRef}
                 data={chartJSData}
                 options={chartOptions}
+                onDoubleClick={handleChartDoubleClick} // Dodano za double-click zoom
+                height ={500} // Postavljeno visina grafa
               />
             </div>
           </div>
