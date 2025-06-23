@@ -47,6 +47,10 @@ type EDFFileInfo = {
   originalFileName: string;
 };
 
+type ChannelData = {
+  labels: Date[];
+  data: number[];
+}
 // Formatiranje vremena
 function addSeconds(date: Date, seconds: number): Date {
   const newDate = new Date(date.getTime() + seconds * 1000);
@@ -85,6 +89,9 @@ export default function EDFUpload() {
   const [error, setError] = useState<string | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   //const [isZooming, setIsZooming] = useState(false);
+  const [multiChannelMode, setMultiChannelMode] = useState<boolean>(false); // Dodano za višekanalni prikaz
+  const [selectedChannels, setSelectedChannels] = useState<string[]>([]); // Za višekanalni prikaz
+  const [channelData, setChannelData] = useState<{ [channel: string]: ChannelData }>({}); // Za višekanalni prikaz
 
   // Stanja za upravljanje prikazanim podacima i zumiranjem
   const [chartDataState, setChartDataState] = useState<{ labels: Date[]; data: number[]; } | null>(null);
@@ -149,6 +156,82 @@ export default function EDFUpload() {
   },
   300
 );
+  // Initialize with first channel selected
+  useEffect(() => {
+    if (fileInfo?.channels?.length && fileInfo.channels.length > 0) {
+      if (multiChannelMode) {
+        setSelectedChannels([fileInfo.channels[0]]);
+      } else {
+        setSelectedChannel(fileInfo.channels[0]);
+      }
+    }
+  }, [fileInfo, multiChannelMode])
+
+    // Toggle multi-channel mode
+  const toggleMultiChannelMode = () => {
+    setMultiChannelMode(!multiChannelMode);
+    if (!multiChannelMode) {
+      setSelectedChannels(selectedChannel ? [selectedChannel] : []);
+    }
+  };
+    // Handle channel selection changes
+  const handleChannelSelect = (channel: string) => {
+    if (selectedChannels.includes(channel)) {
+      setSelectedChannels(selectedChannels.filter(ch => ch !== channel));
+    } else {
+      if (selectedChannels.length < 5) {
+        setSelectedChannels([...selectedChannels, channel]);
+      } else {
+        alert("Maximum 5 channels can be displayed simultaneously");
+      }
+    }
+  };
+
+   // Fetch data for multiple channels
+  const fetchDataForChannels = useCallback(async () => {
+    if (!fileInfo || selectedChannels.length === 0) return;
+    
+    setIsLoadingChunk(true);
+    setError(null);
+    
+    try {
+      const newChannelData: {[channel: string]: ChannelData} = {...channelData};
+      
+      for (const channel of selectedChannels) {
+        if (!channelData[channel] || channelData[channel].data.length === 0) {
+          const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(channel)];
+          const initialNumSamples = fileInfo.previewData[channel]?.length || 500;
+          
+          const response = await axios.get<{ data: number[] }>(
+            `http://localhost:5000/api/upload/edf-chunk?filePath=${encodeURIComponent(fileInfo.tempFilePath)}&channel=${encodeURIComponent(channel)}&start_sample=0&num_samples=${initialNumSamples}`
+          );
+          
+          const chunkData = response.data.data;
+          const startTime = new Date(fileInfo.startTime);
+          
+          const labels = chunkData.map((_, i) => {
+            return addSeconds(startTime, i / sampleRate);
+          });
+          
+          newChannelData[channel] = { labels, data: chunkData };
+        }
+      }
+      
+      setChannelData(newChannelData);
+    } catch (err) {
+      console.error("Error fetching multi-channel data:", err);
+      setError("Error loading channel data");
+    } finally {
+      setIsLoadingChunk(false);
+    }
+  }, [fileInfo, selectedChannels, channelData]);
+
+  // Fetch data when selected channels change
+  useEffect(() => {
+    if (multiChannelMode && selectedChannels.length > 0) {
+      fetchDataForChannels();
+    }
+  }, [multiChannelMode, selectedChannels, fetchDataForChannels]);
 
 const handleFullNightView = useCallback(() => {
   if (!fileInfo || !selectedChannel) return;
@@ -238,36 +321,57 @@ const handleFullNightView = useCallback(() => {
     }
   }, [selectedChannel, fileInfo, debouncedFetchEdfChunk]);
 
-const spo2Threshold = 90;
-const isSpo2 = selectedChannel?.toLowerCase().includes("spo2");
 
 // Generiraj boje za točke ako je SpO2 kanal
-const pointColors = useMemo(() => {
-  if (!isSpo2 || !chartDataState?.data) return [];
-  return chartDataState.data.map(value =>
-    value < spo2Threshold ? "red" : "blue"
-  );
-}, [chartDataState, isSpo2]);
 
 const chartJSData = useMemo(() => {
-  if (!chartDataState || !selectedChannel) return { labels: [], datasets: [] };
+    if (!multiChannelMode || selectedChannels.length === 0) {
+      // Single channel mode (existing implementation)
+      if (!chartDataState || !selectedChannel) return { labels: [], datasets: [] };
+      
+      const isSpo2 = selectedChannel.toLowerCase().includes("spo2");
+      const pointColors = isSpo2 && chartDataState.data 
+        ? chartDataState.data.map(value => value < 90 ? "red" : "blue")
+        : [];
+      
+      return {
+        labels: chartDataState.labels,
+        datasets: [{
+          label: selectedChannel,
+          data: chartDataState.data,
+          borderColor: "rgb(59, 130, 246)",
+          backgroundColor: "rgba(59, 130, 246, 0.2)",
+          tension: 0.4,
+          pointRadius: isSpo2 ? 3 : 0,
+          pointBackgroundColor: isSpo2 ? pointColors : undefined,
+          borderWidth: 1,
+        }],
+      };
+    }
 
-  return {
-    labels: chartDataState.labels,
-    datasets: [
-      {
-        label: selectedChannel,
-        data: chartDataState.data,
-        borderColor: "rgb(59, 130, 246)",
-        backgroundColor: "rgba(59, 130, 246, 0.2)",
-        tension: 0.4,
-        pointRadius: isSpo2 ? 3 : 0,
-        pointBackgroundColor: isSpo2 ? pointColors : undefined,
-        borderWidth: 1,
-      },
-    ],
-  };
-}, [chartDataState, selectedChannel, isSpo2, pointColors]);
+    // Multi-channel mode
+    const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
+    
+    return {
+      labels: selectedChannels.length > 0 
+        ? channelData[selectedChannels[0]]?.labels || [] 
+        : [],
+      datasets: selectedChannels.map((channel, index) => {
+        const data = channelData[channel]?.data || [];
+        const isSpo2 = channel.toLowerCase().includes("spo2");
+        
+        return {
+          label: channel,
+          data,
+          borderColor: colors[index % colors.length],
+          backgroundColor: `${colors[index % colors.length]}33`,
+          tension: 0.4,
+          pointRadius: isSpo2 ? 3 : 0,
+          borderWidth: 1,
+        };
+      }),
+    };
+  }, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel]);
   const handleZoomOrPan = useCallback((startSample: number, endSample: number) => {
   if (!fileInfo || !selectedChannel) return;
   
@@ -497,14 +601,14 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
           <FaUpload className="w-12 h-12 mb-4" />
           <p className="text-lg font-medium">Povucite EDF fajl ovdje</p>
           <p className="text-sm text-gray-500 mt-2">ili kliknite za odabir</p>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+            accept=".edf"
+          />
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
-          accept=".edf"
-        />
       </div>
 
       {/* Status */}
@@ -566,37 +670,79 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
           </div>
 
           {/* Detaljne informacije i graf */}
-         <div className="space-y-6">
-          {/* Select i statistike */}
-          <div className="bg-white rounded-xl shadow p-6">
-            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <FaWaveSquare className="w-5 h-5 text-gray-600" />
-              Odabrani kanal
-            </h3>
-
-            <select
-              value={selectedChannel || ""}
-              onChange={(e) => setSelectedChannel(e.target.value)}
-              className="w-full p-2 border rounded-md mb-4"
-            >
-              {fileInfo.channels.map((channel, index) => (
-                <option key={`${channel}-${index}`} value={channel}>
-                  {channel}
-                </option>
-              ))}
-            </select>
-
-            {/* Statistika */}
-            {channelStats && (
-              <div className="mb-4 text-sm bg-gray-50 p-4 rounded-lg grid grid-cols-2 sm:grid-cols-3 gap-4">
-                <div><b>Prosjek:</b> {channelStats.mean.toFixed(4)}</div>
-                <div><b>Medijan:</b> {channelStats.median.toFixed(4)}</div>
-                <div><b>Min:</b> {channelStats.min.toFixed(4)}</div>
-                <div><b>Max:</b> {channelStats.max.toFixed(4)}</div>
-                <div><b>Std dev:</b> {channelStats.stddev.toFixed(4)}</div>
+          {/* Multi-channel toggle */}
+          <div className="mb-4 flex items-center">
+            <label className="flex items-center cursor-pointer">
+              <div className="relative">
+                <input 
+                  type="checkbox" 
+                  className="sr-only" 
+                  checked={multiChannelMode}
+                  onChange={toggleMultiChannelMode}
+                />
+                <div className={`block w-14 h-8 rounded-full transition ${multiChannelMode ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
+                <div className={`absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${multiChannelMode ? 'transform translate-x-6' : ''}`}></div>
               </div>
-            )}
+              <div className="ml-3 text-gray-700 font-medium">
+                Multi-Channel Display
+              </div>
+            </label>
           </div>
+
+          {/* Channel Selection */}
+          {fileInfo && (
+            <div className="mb-6">
+              <h3 className="text-lg font-medium mb-2">Select Channels:</h3>
+              
+              {multiChannelMode ? (
+                // Checkbox list for multi-channel mode
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {fileInfo.channels.map((channel) => (
+                    <label key={channel} className="flex items-center">
+                      <input
+                        type="checkbox"
+                        className="form-checkbox h-5 w-5 text-blue-600"
+                        checked={selectedChannels.includes(channel)}
+                        onChange={() => handleChannelSelect(channel)}
+                        disabled={selectedChannels.length >= 5 && !selectedChannels.includes(channel)}
+                      />
+                      <span className="ml-2 text-gray-700">{channel}</span>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                // Dropdown for single-channel mode
+                <select
+                  value={selectedChannel || ''}
+                  onChange={(e) => setSelectedChannel(e.target.value)}
+                  className="w-full p-2 border rounded-md"
+                >
+                  {fileInfo.channels.map((channel) => (
+                    <option key={channel} value={channel}>
+                      {channel}
+                    </option>
+                  ))}
+                </select>
+              )}
+              
+              {multiChannelMode && (
+                <p className="mt-2 text-sm text-gray-500">
+                  {selectedChannels.length}/5 channels selected
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Statistika */}
+          {channelStats && (
+            <div className="mb-4 text-sm bg-gray-50 p-4 rounded-lg grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <div><b>Prosjek:</b> {channelStats.mean.toFixed(4)}</div>
+              <div><b>Medijan:</b> {channelStats.median.toFixed(4)}</div>
+              <div><b>Min:</b> {channelStats.min.toFixed(4)}</div>
+              <div><b>Max:</b> {channelStats.max.toFixed(4)}</div>
+              <div><b>Std dev:</b> {channelStats.stddev.toFixed(4)}</div>
+            </div>
+          )}
 
           {/* Graf na cijeloj širini */}
           <div className="bg-white rounded-xl shadow p-4">
@@ -627,10 +773,7 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
             </div>
           </div>
         </div>
-        </div>
       )}
     </div>
   );
 }
-
-
