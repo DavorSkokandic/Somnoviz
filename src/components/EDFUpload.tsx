@@ -187,44 +187,46 @@ export default function EDFUpload() {
     }
   };
 
+const channelDataRef = useRef(channelData);
+  useEffect(() => {
+    channelDataRef.current = channelData;
+  }, [channelData]);
    // Fetch data for multiple channels
   const fetchDataForChannels = useCallback(async () => {
-    if (!fileInfo || selectedChannels.length === 0) return;
-    
-    setIsLoadingChunk(true);
-    setError(null);
-    
-    try {
-      const newChannelData: {[channel: string]: ChannelData} = {...channelData};
-      
-      for (const channel of selectedChannels) {
-        if (!channelData[channel] || channelData[channel].data.length === 0) {
-          const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(channel)];
-          const initialNumSamples = fileInfo.previewData[channel]?.length || 500;
-          
-          const response = await axios.get<{ data: number[] }>(
-            `http://localhost:5000/api/upload/edf-chunk?filePath=${encodeURIComponent(fileInfo.tempFilePath)}&channel=${encodeURIComponent(channel)}&start_sample=0&num_samples=${initialNumSamples}`
-          );
-          
-          const chunkData = response.data.data;
-          const startTime = new Date(fileInfo.startTime);
-          
-          const labels = chunkData.map((_, i) => {
-            return addSeconds(startTime, i / sampleRate);
-          });
-          
-          newChannelData[channel] = { labels, data: chunkData };
-        }
+  if (!fileInfo || selectedChannels.length === 0) return;
+  
+  setIsLoadingChunk(true);
+  setError(null);
+  
+  try {
+    const newChannelData: { [channel: string]: ChannelData } = { ...channelDataRef.current };
+
+    for (const channel of selectedChannels) {
+      if (!newChannelData[channel] || newChannelData[channel].data.length === 0) {
+        const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(channel)];
+        const initialNumSamples = fileInfo.previewData[channel]?.length || 500;
+
+        const response = await axios.get<{ data: number[] }>(
+          `http://localhost:5000/api/upload/edf-chunk?filePath=${encodeURIComponent(fileInfo.tempFilePath)}&channel=${encodeURIComponent(channel)}&start_sample=0&num_samples=${initialNumSamples}`
+        );
+
+        const chunkData = response.data.data;
+        const startTime = new Date(fileInfo.startTime);
+
+        const labels = chunkData.map((_, i) => addSeconds(startTime, i / sampleRate));
+
+        newChannelData[channel] = { labels, data: chunkData };
       }
-      
-      setChannelData(newChannelData);
-    } catch (err) {
-      console.error("Error fetching multi-channel data:", err);
-      setError("Error loading channel data");
-    } finally {
-      setIsLoadingChunk(false);
     }
-  }, [fileInfo, selectedChannels, channelData]);
+
+    setChannelData(newChannelData);
+  } catch (err) {
+    console.error("Error fetching multi-channel data:", err);
+    setError("Error loading channel data");
+  } finally {
+    setIsLoadingChunk(false);
+  }
+}, [fileInfo, selectedChannels]);
 
   // Fetch data when selected channels change
   useEffect(() => {
@@ -697,8 +699,8 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
               {multiChannelMode ? (
                 // Checkbox list for multi-channel mode
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                  {fileInfo.channels.map((channel) => (
-                    <label key={channel} className="flex items-center">
+                  {fileInfo.channels.map((channel, index) => (
+                    <label key={`${channel}-${index}`}className="flex items-center">
                       <input
                         type="checkbox"
                         className="form-checkbox h-5 w-5 text-blue-600"
@@ -717,8 +719,8 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
                   onChange={(e) => setSelectedChannel(e.target.value)}
                   className="w-full p-2 border rounded-md"
                 >
-                  {fileInfo.channels.map((channel) => (
-                    <option key={channel} value={channel}>
+                  {fileInfo.channels.map((channel, index) => (
+                     <option key={`${channel}-${index}`} value={channel}>
                       {channel}
                     </option>
                   ))}
@@ -729,6 +731,7 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
                 <p className="mt-2 text-sm text-gray-500">
                   {selectedChannels.length}/5 channels selected
                 </p>
+                
               )}
             </div>
           )}
