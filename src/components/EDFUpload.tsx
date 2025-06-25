@@ -51,31 +51,21 @@ type ChannelData = {
   labels: Date[];
   data: number[];
 }
+
+type ChannelStats = {
+  mean: number;
+  median: number;
+  min: number;
+  max: number;
+  stddev: number;
+};
 // Formatiranje vremena
 function addSeconds(date: Date, seconds: number): Date {
   const newDate = new Date(date.getTime() + seconds * 1000);
   return newDate;
 }
 
-function mean(arr: number[]): number {
-  if (!arr.length) return 0;
-  return arr.reduce((a, b) => a + b, 0) / arr.length;
-}
 
-function median(arr: number[]): number {
-  if (!arr.length) return 0;
-  const sorted = [...arr].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 !== 0
-    ? sorted[mid]
-    : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-function stddev(arr: number[]): number {
-  if (!arr.length) return 0;
-  const m = mean(arr);
-  return Math.sqrt(mean(arr.map((x) => (x - m) ** 2)));
-}
 
 
 
@@ -92,12 +82,16 @@ export default function EDFUpload() {
   const [multiChannelMode, setMultiChannelMode] = useState<boolean>(false); // Dodano za višekanalni prikaz
   const [selectedChannels, setSelectedChannels] = useState<string[]>([]); // Za višekanalni prikaz
   const [channelData, setChannelData] = useState<{ [channel: string]: ChannelData }>({}); // Za višekanalni prikaz
+  const [channelStats, setChannelStats] = useState<Record<string, ChannelStats>>({});
 
   // Stanja za upravljanje prikazanim podacima i zumiranjem
   const [chartDataState, setChartDataState] = useState<{ labels: Date[]; data: number[]; } | null>(null);
   const [currentZoomStart, setCurrentZoomStart] = useState<number>(0); // Početni uzorak
-  const [currentZoomEnd, setCurrentZoomEnd] = useState<number>(0);     // Završni uzorak
+  //const [currentZoomEnd, setCurrentZoomEnd] = useState<number>(0);     // Završni uzorak
   const [isLoadingChunk, setIsLoadingChunk] = useState<boolean>(false);
+  const [clickedZoomTime, setClickedZoomTime] = useState<Date | null>(null);
+  const [viewport, setViewport] = useState<{ start: number; end: number } | null>(null);
+
 
   // Referenca na ChartJS instancu - tip specificiran za 'line' graf
   const chartRef = useRef<Chart<'line'> | null>(null);
@@ -117,7 +111,7 @@ export default function EDFUpload() {
 
     try {
       const response = await axios.get<{ data: number[] }>(
-        `http://localhost:5000/api/upload/edf-chunk?filePath=${encodeURIComponent(filePath)}&channel=${encodeURIComponent(channel)}&start_sample=${startSample}&num_samples=${numSamples}&max_points=${maxPoints}`,
+        `http://localhost:5000/api/upload/edf-chunk?filePath=${encodeURIComponent(filePath)}&channel=${encodeURIComponent(channel)}&start_sample=${Math.floor(startSample)}&num_samples=${Math.floor(numSamples)}&max_points=${maxPoints}`,
       );
 
       const chunkData = response.data.data;
@@ -131,7 +125,7 @@ export default function EDFUpload() {
 
       setChartDataState({ labels, data: chunkData });
       setCurrentZoomStart(startSample);
-      setCurrentZoomEnd(startSample + chunkData.length);
+      //setCurrentZoomEnd(startSample + chunkData.length);
 
     } catch (err: unknown) { // Ispravljen tip za catch block
       console.error("Greška pri dohvaćanju EDF chunka:", err);
@@ -143,7 +137,7 @@ export default function EDFUpload() {
 
   // Debouncana verzija funkcije za dohvaćanje chunkova
   // useMemo osigurava da se debouncana funkcija stvara samo kada se promijeni fetchEdfChunkInternal.
-  const debouncedFetchEdfChunk = useDebouncedCallback(
+ const debouncedFetchEdfChunk = useDebouncedCallback(
   (
     filePath: string,
     channel: string,
@@ -152,20 +146,22 @@ export default function EDFUpload() {
     sampleRate: number,
     maxPoints: number = 2000 // Maksimalan broj uzoraka za dohvaćanje
   ) => {
-    fetchEdfChunkInternal(filePath, channel, startSample, numSamples, sampleRate,maxPoints);
+    // 🔧 Osiguraj da su vrijednosti cijeli brojevi
+    const roundedStartSample = Math.floor(startSample);
+    const roundedNumSamples = Math.floor(numSamples);
+    const safeMaxPoints = Math.floor(maxPoints);
+
+    fetchEdfChunkInternal(
+      filePath,
+      channel,
+      roundedStartSample,
+      roundedNumSamples,
+      sampleRate,
+      safeMaxPoints
+    );
   },
   300
 );
-  // Initialize with first channel selected
-  useEffect(() => {
-    if (fileInfo?.channels?.length && fileInfo.channels.length > 0) {
-      if (multiChannelMode) {
-        setSelectedChannels([fileInfo.channels[0]]);
-      } else {
-        setSelectedChannel(fileInfo.channels[0]);
-      }
-    }
-  }, [fileInfo, multiChannelMode])
 
     // Toggle multi-channel mode
   const toggleMultiChannelMode = () => {
@@ -235,23 +231,32 @@ const channelDataRef = useRef(channelData);
     }
   }, [multiChannelMode, selectedChannels, fetchDataForChannels]);
 
-const handleFullNightView = useCallback(() => {
-  if (!fileInfo || !selectedChannel) return;
-  
-  const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
-  const totalSamples = fileInfo.duration * sampleRate;
-  
-  // Auto-downsample ako ima više od 100k uzoraka 
-  const downsampleFactor = totalSamples > 100000 ? 100 : 1;
-  
-  debouncedFetchEdfChunk(
-    fileInfo.tempFilePath,
-    selectedChannel,
-    0,
-    Math.floor(totalSamples / downsampleFactor),
-    sampleRate,
-  );
-}, [fileInfo, selectedChannel, debouncedFetchEdfChunk]);
+const handleFullNightView = () => {
+  if (!fileInfo) return;
+
+  const start = 0;
+  const end = fileInfo.duration;
+  setViewport({ start, end });
+
+  if (multiChannelMode && selectedChannels.length > 0) {
+    debouncedFetchMultiChunks(start, end); // koristi debounced poziv za više kanala
+  } else if (!multiChannelMode && selectedChannel) {
+    const channelIndex = fileInfo.channels.indexOf(selectedChannel);
+    if (channelIndex === -1) return;
+
+    const sampleRate = fileInfo.sampleRates[channelIndex];
+    const numSamples = Math.floor(fileInfo.duration * sampleRate);
+
+    debouncedFetchEdfChunk(
+      fileInfo.tempFilePath,
+      selectedChannel,
+      0,
+      numSamples,
+      sampleRate,
+      2000
+    );
+  }
+};
   const handleFileUpload = async (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -283,7 +288,7 @@ const handleFullNightView = useCallback(() => {
         });
         setChartDataState({ labels, data: previewDataArr });
         setCurrentZoomStart(0);
-        setCurrentZoomEnd(previewDataArr.length);
+        //setCurrentZoomEnd(previewDataArr.length);
       }
 
     } catch (err: unknown) { // Ispravljen tip za catch block
@@ -324,59 +329,125 @@ const handleFullNightView = useCallback(() => {
   }, [selectedChannel, fileInfo, debouncedFetchEdfChunk]);
 
 
+const debouncedFetchMultiChunks = useDebouncedCallback(
+  async (start: number, end: number) => {
+    if (!fileInfo || selectedChannels.length === 0) return;
+
+    
+    const sampleRate = fileInfo.sampleRates[0]; // pretpostavka: isti za sve
+    const duration = fileInfo.duration;
+
+    // ❗ Osiguraj granice uzorkovanja
+    const boundedStart = Math.max(0, start);
+    const boundedEnd = Math.min(duration, end);
+
+    const startSample = Math.floor(boundedStart * sampleRate);
+    const numSamples = Math.max(0,Math.floor(boundedEnd - boundedStart) * sampleRate);
+    if (numSamples <= 0) return;
+    
+    for (const channel of selectedChannels) {
+      try {
+        const response = await axios.get<{
+          data: number[];
+          stats?: ChannelStats;
+        }>(`http://localhost:5000/api/upload/edf-chunk-downsample`, {
+          params: {
+            filePath: fileInfo.tempFilePath,
+            channel,
+            start_sample: startSample,
+            num_samples: numSamples,
+            target_points: 2000, // Maksimalan broj uzoraka za dohvaćanje
+          },
+        });
+
+        const chunkData = response.data?.data || [];
+
+        if (chunkData.length === 0) {
+          console.warn(`Nema podataka za kanal ${channel}, preskačem...`);
+          continue;
+        }
+        const startTime = new Date(fileInfo.startTime);
+        const labels = chunkData.map((_: number, i: number) => addSeconds(startTime, start + i / sampleRate));
+
+        setChannelData(prev => ({
+          ...prev,
+          [channel]: { labels, data: chunkData },
+        }));
+
+        if (response.data.stats) {
+          setChannelStats(prev => ({
+            ...prev,
+            [channel]: response.data.stats as ChannelStats,
+          }));
+        }
+      } catch (err) {
+        console.error(`Greška pri dohvaćanju podataka za kanal ${channel}:`, err);
+      }
+    }
+  },
+  500
+);
 // Generiraj boje za točke ako je SpO2 kanal
 
 const chartJSData = useMemo(() => {
-    if (!multiChannelMode || selectedChannels.length === 0) {
-      // Single channel mode (existing implementation)
-      if (!chartDataState || !selectedChannel) return { labels: [], datasets: [] };
-      
-      const isSpo2 = selectedChannel.toLowerCase().includes("spo2");
-      const pointColors = isSpo2 && chartDataState.data 
-        ? chartDataState.data.map(value => value < 90 ? "red" : "blue")
-        : [];
-      
-      return {
-        labels: chartDataState.labels,
-        datasets: [{
-          label: selectedChannel,
-          data: chartDataState.data,
-          borderColor: "rgb(59, 130, 246)",
-          backgroundColor: "rgba(59, 130, 246, 0.2)",
-          tension: 0.4,
-          pointRadius: isSpo2 ? 3 : 0,
-          pointBackgroundColor: isSpo2 ? pointColors : undefined,
-          borderWidth: 1,
-        }],
-      };
-    }
+  // Single channel prikaz
+  if (!multiChannelMode || selectedChannels.length === 0) {
+    if (!chartDataState || !selectedChannel) return { labels: [], datasets: [] };
 
-    // Multi-channel mode
-    const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
-    
+    const isSpo2 = selectedChannel.toLowerCase().includes("spo2");
+    const pointColors = isSpo2 && chartDataState.data
+      ? chartDataState.data.map(value => value < 90 ? "red" : "blue")
+      : [];
+
     return {
-      labels: selectedChannels.length > 0 
-        ? channelData[selectedChannels[0]]?.labels || [] 
-        : [],
-      datasets: selectedChannels.map((channel, index) => {
-        const data = channelData[channel]?.data || [];
-        const isSpo2 = channel.toLowerCase().includes("spo2");
-        
-        return {
-          label: channel,
-          data,
-          borderColor: colors[index % colors.length],
-          backgroundColor: `${colors[index % colors.length]}33`,
-          tension: 0.4,
-          pointRadius: isSpo2 ? 3 : 0,
-          borderWidth: 1,
-        };
-      }),
+      labels: chartDataState.labels,
+      datasets: [{
+        label: selectedChannel,
+        data: chartDataState.data,
+        borderColor: "rgb(59, 130, 246)",
+        backgroundColor: "rgba(59, 130, 246, 0.2)",
+        tension: 0.4,
+        pointRadius: isSpo2 ? 3 : 0,
+        pointBackgroundColor: isSpo2 ? pointColors : undefined,
+        borderWidth: 1,
+      }],
     };
-  }, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel]);
+  }
+
+  // Multi-channel prikaz
+  const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
+
+  return {
+    labels: selectedChannels.length > 0
+      ? channelData[selectedChannels[0]]?.labels || []
+      : [],
+    datasets: selectedChannels.map((channel, index) => {
+      const data = channelData[channel]?.data || [];
+      const isSpo2 = channel.toLowerCase().includes("spo2");
+
+      const pointColors = isSpo2
+        ? data.map(value => value < 90 ? "red" : "blue")
+        : [];
+
+      return {
+        label: channel,
+        data,
+        borderColor: colors[index % colors.length],
+        backgroundColor: `${colors[index % colors.length]}33`,
+        tension: 0.4,
+        pointRadius: isSpo2 ? 3 : 0,
+        pointBackgroundColor: isSpo2 ? pointColors : undefined,
+        borderWidth: 1,
+        yAxisID: `y-${index}`, // podrška za više y osi (ako koristiš)
+      };
+    }),
+  };
+}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel]);
+
   const handleZoomOrPan = useCallback((startSample: number, endSample: number) => {
   if (!fileInfo || !selectedChannel) return;
   
+  if (isNaN(startSample) || isNaN(endSample) || startSample < 0 || endSample <= startSample) return;
   const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
   const numSamples = endSample - startSample;
 
@@ -408,152 +479,164 @@ const chartJSData = useMemo(() => {
 
 
   // Chart.js opcije s prilagođenom logikom zooma
-   const chartOptions: ChartOptions<'line'> = useMemo(() => { // Eksplicitno tipovanje opcija
-    if (!fileInfo || !selectedChannel) return {};
+  const chartOptions: ChartOptions<'line'> = useMemo(() => {
+  if (!fileInfo || (!selectedChannel && selectedChannels.length === 0)) return {};
 
-    const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
-    const totalSamples = Math.floor(fileInfo.duration * sampleRate);
+  const sampleRate = selectedChannel
+    ? fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)]
+    : fileInfo.sampleRates[0]; // U multi-mode pretpostavljamo isti sampleRate
 
-    return {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false as const, // Ispravljen tip za `animation`
-      scales: {
-        x: {
-          type: 'time',
-          time: {
-              unit: 'second',
-              displayFormats: {
-                  second: 'HH:mm:ss',
-                  minute: 'HH:mm',
-                  hour: 'HH',
-                  day: 'MM-DD',
-              },
-          },
-          adapters: {
-            date: {
-              locale: enUS,
-            }
-          },
-          title: {
-            display: true,
-            text: "Vrijeme",
+  const isMulti = multiChannelMode;
+  //const totalSamples = Math.floor(fileInfo.duration * sampleRate);
+
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false as const,
+    scales: {
+      x: {
+        type: 'time',
+        time: {
+          unit: 'second',
+          displayFormats: {
+            second: 'HH:mm:ss',
+            minute: 'HH:mm',
+            hour: 'HH',
+            day: 'MM-DD',
           },
         },
-        y: {
-          title: {
-            display: true,
-            text: "Amplituda",
+        adapters: {
+          date: {
+            locale: enUS,
+          },
+        },
+        title: {
+          display: true,
+          text: 'Vrijeme',
+        },
+      },
+      y: {
+        title: {
+          display: true,
+          text: 'Amplituda',
+        },
+      },
+    },
+    plugins: {
+      tooltip: {
+        callbacks: {
+          title: (items: TooltipItem<'line'>[]) => {
+            if (!fileInfo || !sampleRate) return items[0].label ?? '';
+            const dataIndex = items[0].dataIndex;
+            const absoluteSampleIndex = (viewport?.start || 0) * sampleRate + dataIndex;
+            const timeInSeconds = absoluteSampleIndex / sampleRate;
+            const date = addSeconds(new Date(fileInfo.startTime), timeInSeconds);
+            return date.toLocaleTimeString('hr-HR', {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              fractionalSecondDigits: 3,
+            } as Intl.DateTimeFormatOptions);
           },
         },
       },
-      plugins: {
-        tooltip: {
-          callbacks: {
-            title: (items: TooltipItem<'line'>[]) => { // Ispravljen tip za items
-              if (fileInfo && chartDataState) {
-                const dataIndex = items[0].dataIndex;
-                const absoluteSampleIndex = currentZoomStart + dataIndex;
-                const timeInSeconds = absoluteSampleIndex / sampleRate;
-                const date = addSeconds(new Date(fileInfo.startTime), timeInSeconds);
-                // Casting na any za `toLocaleTimeString` zbog fractionalSecondDigits
-                return date.toLocaleTimeString('hr-HR', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
-                  fractionalSecondDigits: 3
-                } as Intl.DateTimeFormatOptions); // Casting na Intl.DateTimeFormatOptions
+      zoom: {
+        pan: {
+          enabled: true,
+          mode: 'x',
+          onPanComplete: ({ chart }) => {
+            const xScale = chart.scales['x'];
+            const startTime = new Date(fileInfo.startTime).getTime();
+            
+            const start = (xScale.min as number - startTime) / 1000;
+            const end = (xScale.max as number - startTime) / 1000;
+            if (typeof start === 'number' && typeof end === 'number') {
+              setViewport({ start, end });
+              handleZoomOrPan(start, end); // ✅ obavezno koristi
+              if (isMulti) {
+                debouncedFetchMultiChunks(start, end);
+              } else {
+                if (isNaN(start) || isNaN(end) || start < 0 || end <= start) return;
+                const fetchStartSample = Math.floor(start * sampleRate);
+                const fetchNumSamples = Math.ceil((end - start) * sampleRate);
+                debouncedFetchEdfChunk(
+                  fileInfo.tempFilePath,
+                  selectedChannel!,
+                  fetchStartSample,
+                  fetchNumSamples,
+                  sampleRate
+                );
               }
-              return items[0].label ?? ""; // Dodana ?? "" za sigurnost
             }
-          }
+          },
         },
         zoom: {
-          pan: {
-            enabled: true,
-            mode: 'x',
-            onPanComplete: (context) => {
-              const chart = context.chart as Chart<'line'>;
-              if (!fileInfo || !selectedChannel || !chartDataState) return;
-
-              const xScale = chart.scales.x;
-              const newMinTime = xScale.min as number;
-              const newMaxTime = xScale.max as number;
-              const originalStartTime = new Date(fileInfo.startTime).getTime();
-
-              const newStartSample = Math.floor((newMinTime - originalStartTime) / 1000 * sampleRate);
-              const newEndSample = Math.ceil((newMaxTime - originalStartTime) / 1000 * sampleRate);
-
-              const buffer = Math.floor(chartDataState.data.length * 0.1);
-              if (newStartSample >= currentZoomStart - buffer && newEndSample <= currentZoomEnd + buffer) {
-                  return;
-              }
-
-              const fetchStartSample = Math.max(0, newStartSample - buffer);
-              const fetchEndSample = Math.min(totalSamples, newEndSample + buffer);
-              let fetchNumSamples = fetchEndSample - fetchStartSample;
-              handleZoomOrPan(xScale.min, xScale.max);
-              if (fetchStartSample + fetchNumSamples > totalSamples) {
-                fetchNumSamples = totalSamples - fetchStartSample;
-              }
-              if (fetchNumSamples <= 0) {
-                return;
-              }
-
-              if (fileInfo.tempFilePath && selectedChannel && fetchNumSamples > 0 && sampleRate &&
-                  (fetchStartSample !== currentZoomStart || fetchNumSamples !== (currentZoomEnd - currentZoomStart))) {
-                debouncedFetchEdfChunk(fileInfo.tempFilePath, selectedChannel, fetchStartSample, fetchNumSamples, sampleRate);
+          wheel: { enabled: true },
+          pinch: { enabled: true },
+          mode: 'x',
+          onZoomComplete: ({ chart }) => {
+            const xScale = chart.scales['x'];
+            const startTime = new Date(fileInfo.startTime).getTime();
+            const start = (xScale.min as number - startTime) / 1000;
+            const end = (xScale.max as number - startTime) / 1000;
+            if (typeof start === 'number' && typeof end === 'number') {
+              setViewport({ start, end });
+              handleZoomOrPan(start, end); // ✅ obavezno koristi
+              if (isMulti) {
+                debouncedFetchMultiChunks(start, end);
+              } else {
+                if (isNaN(start) || isNaN(end) || start < 0 || end <= start) return;
+                const fetchStartSample = Math.floor(start * sampleRate);
+                const fetchNumSamples = Math.ceil((end - start) * sampleRate);
+                debouncedFetchEdfChunk(
+                  fileInfo.tempFilePath,
+                  selectedChannel!,
+                  fetchStartSample,
+                  fetchNumSamples,
+                  sampleRate
+                );
               }
             }
           },
-          zoom: {
-            wheel: {
-              enabled: true,
-            },
-            pinch: {
-              enabled: true
-            },
-            mode: 'x',
-            onZoomComplete: (context) => {
-              const chart = context.chart as Chart<'line'>;
-              if (!fileInfo || !selectedChannel || !chartDataState) return;
-
-              const xScale = chart.scales.x;
-              const newMinTime = xScale.min as number;
-              const newMaxTime = xScale.max as number;
-              const originalStartTime = new Date(fileInfo.startTime).getTime();
-
-              const newStartSample = Math.floor((newMinTime - originalStartTime) / 1000 * sampleRate);
-              const newEndSample = Math.ceil((newMaxTime - originalStartTime) / 1000 * sampleRate);
-
-              const fetchStartSample = Math.max(0, newStartSample);
-              const fetchEndSample = Math.min(totalSamples, newEndSample);
-              const fetchNumSamples = fetchEndSample - fetchStartSample;
-              handleZoomOrPan(xScale.min, xScale.max)
-              if (fileInfo.tempFilePath && selectedChannel && fetchNumSamples > 0 && sampleRate &&
-                (fetchStartSample !== currentZoomStart || fetchNumSamples !== (currentZoomEnd - currentZoomStart))) {
-                  debouncedFetchEdfChunk(fileInfo.tempFilePath, selectedChannel, fetchStartSample, fetchNumSamples, sampleRate);
-              }
-            }
-          }
-        }
+        },
       },
-    };
-  }, [fileInfo, selectedChannel, debouncedFetchEdfChunk, chartDataState, currentZoomStart, currentZoomEnd,handleZoomOrPan]);
+      legend: { display: true },
+    },
+    onClick: (event) => {
+      if (typeof event.x === 'number' && chartRef.current) {
+        const x = chartRef.current.scales['x'].getValueForPixel(event.x);
+        if (typeof x === 'number') {
+          setClickedZoomTime(new Date(x));
+        }
+      }
+    },
+  };
+}, [
+  fileInfo,
+  selectedChannel,
+  selectedChannels,
+  multiChannelMode,
+  debouncedFetchEdfChunk,
+  debouncedFetchMultiChunks,
+  handleZoomOrPan,
+  viewport,
+]);
 
+// State for zoom time (double-clicked time on chart)
 
+useEffect(() => {
+  if (!clickedZoomTime || !fileInfo) return;
+
+  const zoomRange = 30; // sekundi
+  const center = clickedZoomTime.getTime() / 1000;
+  const start = Math.max(0, center - zoomRange);
+  const end = Math.min(fileInfo.duration, center + zoomRange);
+
+  setViewport({ start, end });
+  debouncedFetchMultiChunks(start, end);
+}, [clickedZoomTime, fileInfo, debouncedFetchMultiChunks]);
   // Ažuriranje statistike za odabrani kanal (sada na temelju dohvaćenih podataka)
-  const channelStats = useMemo(() => {
-    if (!selectedChannel || !chartDataState) return null; // Koristite chartDataState.data
-    const arr = chartDataState.data || [];
-    return {
-      mean: mean(arr),
-      median: median(arr),
-      min: arr.length ? Math.min(...arr) : 0,
-      max: arr.length ? Math.max(...arr) : 0,
-      stddev: stddev(arr),
-    };
-  }, [selectedChannel, chartDataState]);
+
 
   // Dodaj na vrh komponente
 const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasElement, MouseEvent>) => {
@@ -737,13 +820,18 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
           )}
 
           {/* Statistika */}
-          {channelStats && (
-            <div className="mb-4 text-sm bg-gray-50 p-4 rounded-lg grid grid-cols-2 sm:grid-cols-3 gap-4">
-              <div><b>Prosjek:</b> {channelStats.mean.toFixed(4)}</div>
-              <div><b>Medijan:</b> {channelStats.median.toFixed(4)}</div>
-              <div><b>Min:</b> {channelStats.min.toFixed(4)}</div>
-              <div><b>Max:</b> {channelStats.max.toFixed(4)}</div>
-              <div><b>Std dev:</b> {channelStats.stddev.toFixed(4)}</div>
+          {channelStats && Object.keys(channelStats).length > 0 && (
+            <div className="mb-4 text-sm bg-gray-50 p-4 rounded-lg">
+              {Object.keys(channelStats).map((channel) => (
+                <div key={channel} className="mb-2 grid grid-cols-2 sm:grid-cols-3 gap-4">
+                  <strong>{channel}</strong>
+                  <div><b>Prosjek:</b> {channelStats[channel].mean.toFixed(2)}</div>
+                  <div><b>Medijan:</b> {channelStats[channel].median.toFixed(2)}</div>
+                  <div><b>Min:</b> {channelStats[channel].min.toFixed(2)}</div>
+                  <div><b>Max:</b> {channelStats[channel].max.toFixed(2)}</div>
+                  <div><b>Std dev:</b> {channelStats[channel].stddev.toFixed(2)}</div>
+                </div>
+              ))}
             </div>
           )}
 
@@ -780,3 +868,6 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
     </div>
   );
 }
+
+
+// setViewport is now managed by useState above, so this function is not needed and can be removed.
