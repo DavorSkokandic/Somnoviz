@@ -390,12 +390,13 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
 // Generiraj boje za točke ako je SpO2 kanal
 
 const chartJSData = useMemo(() => {
-  // Single channel prikaz
+  if (!fileInfo) return { labels: [], datasets: [] };
+
   if (!multiChannelMode || selectedChannels.length === 0) {
     if (!chartDataState || !selectedChannel) return { labels: [], datasets: [] };
 
     const isSpo2 = selectedChannel.toLowerCase().includes("spo2");
-    const pointColors = isSpo2 && chartDataState.data
+    const pointColors = isSpo2
       ? chartDataState.data.map(value => value < 90 ? "red" : "blue")
       : [];
 
@@ -414,13 +415,15 @@ const chartJSData = useMemo(() => {
     };
   }
 
-  // Multi-channel prikaz
+  // Multi-channel mode
   const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
 
+  // Uvijek koristi label za vrijeme s prvog kanala
+  const firstChannel = selectedChannels[0];
+  const baseLabels = channelData[firstChannel]?.labels || [];
+
   return {
-    labels: selectedChannels.length > 0
-      ? channelData[selectedChannels[0]]?.labels || []
-      : [],
+    labels: baseLabels,
     datasets: selectedChannels.map((channel, index) => {
       const data = channelData[channel]?.data || [];
       const isSpo2 = channel.toLowerCase().includes("spo2");
@@ -438,11 +441,13 @@ const chartJSData = useMemo(() => {
         pointRadius: isSpo2 ? 3 : 0,
         pointBackgroundColor: isSpo2 ? pointColors : undefined,
         borderWidth: 1,
-        yAxisID: `y-${index}`, // podrška za više y osi (ako koristiš)
+        yAxisID: `y-${index}`,
       };
     }),
   };
-}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel]);
+}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo]);
+
+
 
   const handleZoomOrPan = useCallback((startSample: number, endSample: number) => {
   if (!fileInfo || !selectedChannel) return;
@@ -479,20 +484,20 @@ const chartJSData = useMemo(() => {
 
 
   // Chart.js opcije s prilagođenom logikom zooma
-  const chartOptions: ChartOptions<'line'> = useMemo(() => {
+ const chartOptions: ChartOptions<'line'> = useMemo(() => {
   if (!fileInfo || (!selectedChannel && selectedChannels.length === 0)) return {};
 
+  const isMulti = multiChannelMode;
   const sampleRate = selectedChannel
     ? fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)]
-    : fileInfo.sampleRates[0]; // U multi-mode pretpostavljamo isti sampleRate
+    : fileInfo.sampleRates[0];
 
-  const isMulti = multiChannelMode;
-  //const totalSamples = Math.floor(fileInfo.duration * sampleRate);
+  const startTime = new Date(fileInfo.startTime).getTime();
 
   return {
     responsive: true,
     maintainAspectRatio: false,
-    animation: false as const,
+    animation: false,
     scales: {
       x: {
         type: 'time',
@@ -528,7 +533,7 @@ const chartJSData = useMemo(() => {
           title: (items: TooltipItem<'line'>[]) => {
             if (!fileInfo || !sampleRate) return items[0].label ?? '';
             const dataIndex = items[0].dataIndex;
-            const absoluteSampleIndex = (viewport?.start || 0) * sampleRate + dataIndex;
+            const absoluteSampleIndex = currentZoomStart + dataIndex;
             const timeInSeconds = absoluteSampleIndex / sampleRate;
             const date = addSeconds(new Date(fileInfo.startTime), timeInSeconds);
             return date.toLocaleTimeString('hr-HR', {
@@ -545,28 +550,29 @@ const chartJSData = useMemo(() => {
           enabled: true,
           mode: 'x',
           onPanComplete: ({ chart }) => {
-            const xScale = chart.scales['x'];
-            const startTime = new Date(fileInfo.startTime).getTime();
-            
-            const start = (xScale.min as number - startTime) / 1000;
-            const end = (xScale.max as number - startTime) / 1000;
-            if (typeof start === 'number' && typeof end === 'number') {
-              setViewport({ start, end });
-              handleZoomOrPan(start, end); // ✅ obavezno koristi
-              if (isMulti) {
-                debouncedFetchMultiChunks(start, end);
-              } else {
-                if (isNaN(start) || isNaN(end) || start < 0 || end <= start) return;
-                const fetchStartSample = Math.floor(start * sampleRate);
-                const fetchNumSamples = Math.ceil((end - start) * sampleRate);
-                debouncedFetchEdfChunk(
-                  fileInfo.tempFilePath,
-                  selectedChannel!,
-                  fetchStartSample,
-                  fetchNumSamples,
-                  sampleRate
-                );
-              }
+            const xScale = chart.scales.x;
+            const min = xScale.min as number;
+            const max = xScale.max as number;
+
+            const newStart = (min - startTime) / 1000;
+            const newEnd = (max - startTime) / 1000;
+
+            if (newEnd - newStart < 1) return;
+
+            setViewport({ start: newStart, end: newEnd });
+
+            if (isMulti) {
+              debouncedFetchMultiChunks(newStart, newEnd);
+            } else {
+              const fetchStartSample = Math.floor(newStart * sampleRate);
+              const fetchNumSamples = Math.ceil((newEnd - newStart) * sampleRate);
+              debouncedFetchEdfChunk(
+                fileInfo.tempFilePath,
+                selectedChannel!,
+                fetchStartSample,
+                fetchNumSamples,
+                sampleRate
+              );
             }
           },
         },
@@ -575,32 +581,36 @@ const chartJSData = useMemo(() => {
           pinch: { enabled: true },
           mode: 'x',
           onZoomComplete: ({ chart }) => {
-            const xScale = chart.scales['x'];
-            const startTime = new Date(fileInfo.startTime).getTime();
-            const start = (xScale.min as number - startTime) / 1000;
-            const end = (xScale.max as number - startTime) / 1000;
-            if (typeof start === 'number' && typeof end === 'number') {
-              setViewport({ start, end });
-              handleZoomOrPan(start, end); // ✅ obavezno koristi
-              if (isMulti) {
-                debouncedFetchMultiChunks(start, end);
-              } else {
-                if (isNaN(start) || isNaN(end) || start < 0 || end <= start) return;
-                const fetchStartSample = Math.floor(start * sampleRate);
-                const fetchNumSamples = Math.ceil((end - start) * sampleRate);
-                debouncedFetchEdfChunk(
-                  fileInfo.tempFilePath,
-                  selectedChannel!,
-                  fetchStartSample,
-                  fetchNumSamples,
-                  sampleRate
-                );
-              }
+            const xScale = chart.scales.x;
+            const min = xScale.min as number;
+            const max = xScale.max as number;
+
+            const newStart = (min - startTime) / 1000;
+            const newEnd = (max - startTime) / 1000;
+
+            if (newEnd - newStart < 1) return;
+
+            setViewport({ start: newStart, end: newEnd });
+
+            if (isMulti) {
+              debouncedFetchMultiChunks(newStart, newEnd);
+            } else {
+              const fetchStartSample = Math.floor(newStart * sampleRate);
+              const fetchNumSamples = Math.ceil((newEnd - newStart) * sampleRate);
+              debouncedFetchEdfChunk(
+                fileInfo.tempFilePath,
+                selectedChannel!,
+                fetchStartSample,
+                fetchNumSamples,
+                sampleRate
+              );
             }
           },
         },
       },
-      legend: { display: true },
+      legend: {
+        display: true,
+      },
     },
     onClick: (event) => {
       if (typeof event.x === 'number' && chartRef.current) {
@@ -618,9 +628,11 @@ const chartJSData = useMemo(() => {
   multiChannelMode,
   debouncedFetchEdfChunk,
   debouncedFetchMultiChunks,
-  handleZoomOrPan,
-  viewport,
+  currentZoomStart,
 ]);
+
+
+
 
 // State for zoom time (double-clicked time on chart)
 
@@ -841,7 +853,9 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
               <h4 className="text-lg font-medium"></h4>
               <button
                 onClick={handleFullNightView}
-                className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600"
+                 className="bg-black text-white px-6 py-2
+                            rounded -xl shadow-md hover:from-blue-700 hover:via-indigo-800 hover:to-blue-950 hover:scale-105
+                            transition duration-200 font-semibold tracking-wide flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
               >
                 Pregled cijele snimke
               </button>
