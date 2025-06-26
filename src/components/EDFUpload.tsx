@@ -237,7 +237,7 @@ const handleFullNightView = () => {
   const start = 0;
   const end = fileInfo.duration;
   setViewport({ start, end });
-
+  
   if (multiChannelMode && selectedChannels.length > 0) {
     debouncedFetchMultiChunks(start, end); // koristi debounced poziv za više kanala
   } else if (!multiChannelMode && selectedChannel) {
@@ -256,7 +256,65 @@ const handleFullNightView = () => {
       2000
     );
   }
+  
 };
+const fetchMultiChannelChunk = async (
+  filePath: string,
+  channels: string[],
+  startSample: number,
+  endSample: number,
+  maxPoints: number
+) => {
+  try {
+    const response = await axios.get('/api/upload/edf-multi-chunk', {
+      params: {
+        filePath,
+        channels: JSON.stringify(channels),
+        start_sample: startSample,
+        end_sample: endSample,
+        max_points: maxPoints,
+      },
+    });
+
+    const { labels, channels: data } = response.data;
+    const newChannelData: { [channel: string]: ChannelData } = {};
+
+    channels.forEach((channel) => {
+      newChannelData[channel] = {
+        labels,
+        data: data[channel] || [],
+      };
+    });
+
+    setChannelData(newChannelData);
+
+    // Move this block inside the try so 'response' is in scope
+    if (response.data.labels && response.data.labels.length > 0) {
+      const start = response.data.labels[0].getTime() / 1000;
+      const end = response.data.labels[response.data.labels.length - 1].getTime() / 1000;
+      setViewport({ start, end });
+    }
+  } catch (error) {
+    console.error('Greška pri dohvaćanju multi-channel podataka:', error);
+  }
+};
+const debouncedFetchMultiChunk = useDebouncedCallback(
+  (
+    start: number,
+    end: number
+  ) => {
+    if (!fileInfo) return;
+    const sampleRate = fileInfo.sampleRates[0]; // assuming same sample rate
+    const startSample = Math.floor(start * sampleRate);
+    const endSample = Math.ceil(end * sampleRate);
+    const chartWidth = chartRef.current?.width || 800;
+    const maxPoints = chartWidth * 2;
+
+    fetchMultiChannelChunk(fileInfo.tempFilePath, selectedChannels, startSample, endSample, maxPoints);
+  },
+  300
+);
+
   const handleFileUpload = async (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -390,19 +448,52 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
 // Generiraj boje za točke ako je SpO2 kanal
 
 const chartJSData = useMemo(() => {
-  if (!fileInfo) return { labels: [], datasets: [] };
+  if (multiChannelMode && selectedChannels.length > 0) {
+    const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
 
-  if (!multiChannelMode || selectedChannels.length === 0) {
-    if (!chartDataState || !selectedChannel) return { labels: [], datasets: [] };
-
-    const isSpo2 = selectedChannel.toLowerCase().includes("spo2");
-    const pointColors = isSpo2
-      ? chartDataState.data.map(value => value < 90 ? "red" : "blue")
-      : [];
+    // Nađi prvi kanal koji stvarno ima data & labels
+    const firstValid = selectedChannels.find(
+      (channel) => channelData[channel]?.labels?.length
+    );
+    const labels = firstValid ? channelData[firstValid]?.labels : [];
 
     return {
-      labels: chartDataState.labels,
-      datasets: [{
+      labels,
+      datasets: selectedChannels.map((channel, index) => {
+        const data = channelData[channel]?.data || [];
+        const isSpo2 = channel.toLowerCase().includes("spo2");
+
+        const pointColors = isSpo2
+          ? data.map((value) => (value < 90 ? "red" : "blue"))
+          : [];
+
+        return {
+          label: channel,
+          data,
+          borderColor: colors[index % colors.length],
+          backgroundColor: `${colors[index % colors.length]}33`,
+          tension: 0.4,
+          pointRadius: isSpo2 ? 3 : 0,
+          pointBackgroundColor: isSpo2 ? pointColors : undefined,
+          borderWidth: 1,
+          yAxisID: `y-${index}`, // ako želiš više Y osi
+        };
+      }),
+    };
+  }
+
+  // Single-channel fallback
+  if (!chartDataState || !selectedChannel) return { labels: [], datasets: [] };
+
+  const isSpo2 = selectedChannel.toLowerCase().includes("spo2");
+  const pointColors = isSpo2
+    ? chartDataState.data.map((value) => (value < 90 ? "red" : "blue"))
+    : [];
+
+  return {
+    labels: chartDataState.labels,
+    datasets: [
+      {
         label: selectedChannel,
         data: chartDataState.data,
         borderColor: "rgb(59, 130, 246)",
@@ -411,41 +502,11 @@ const chartJSData = useMemo(() => {
         pointRadius: isSpo2 ? 3 : 0,
         pointBackgroundColor: isSpo2 ? pointColors : undefined,
         borderWidth: 1,
-      }],
-    };
-  }
-
-  // Multi-channel mode
-  const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
-
-  // Uvijek koristi label za vrijeme s prvog kanala
-  const firstChannel = selectedChannels[0];
-  const baseLabels = channelData[firstChannel]?.labels || [];
-
-  return {
-    labels: baseLabels,
-    datasets: selectedChannels.map((channel, index) => {
-      const data = channelData[channel]?.data || [];
-      const isSpo2 = channel.toLowerCase().includes("spo2");
-
-      const pointColors = isSpo2
-        ? data.map(value => value < 90 ? "red" : "blue")
-        : [];
-
-      return {
-        label: channel,
-        data,
-        borderColor: colors[index % colors.length],
-        backgroundColor: `${colors[index % colors.length]}33`,
-        tension: 0.4,
-        pointRadius: isSpo2 ? 3 : 0,
-        pointBackgroundColor: isSpo2 ? pointColors : undefined,
-        borderWidth: 1,
-        yAxisID: `y-${index}`,
-      };
-    }),
+      },
+    ],
   };
-}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo]);
+}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel]);
+
 
 
 
