@@ -233,20 +233,16 @@ const channelDataRef = useRef(channelData);
 
 const handleFullNightView = () => {
   if (!fileInfo) return;
-
   const start = 0;
   const end = fileInfo.duration;
   setViewport({ start, end });
-  
-  if (multiChannelMode && selectedChannels.length > 0) {
-    debouncedFetchMultiChunks(start, end); // koristi debounced poziv za više kanala
-  } else if (!multiChannelMode && selectedChannel) {
-    const channelIndex = fileInfo.channels.indexOf(selectedChannel);
-    if (channelIndex === -1) return;
 
-    const sampleRate = fileInfo.sampleRates[channelIndex];
+  if (multiChannelMode) {
+    debouncedFetchMultiChunks(start, end);
+  } else {
+    if (!selectedChannel) return;
+    const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
     const numSamples = Math.floor(fileInfo.duration * sampleRate);
-
     debouncedFetchEdfChunk(
       fileInfo.tempFilePath,
       selectedChannel,
@@ -256,7 +252,6 @@ const handleFullNightView = () => {
       2000
     );
   }
-  
 };
 const fetchMultiChannelChunk = async (
   filePath: string,
@@ -276,15 +271,16 @@ const fetchMultiChannelChunk = async (
       },
     });
 
-    const { labels, channels: data } = response.data;
-    const newChannelData: { [channel: string]: ChannelData } = {};
+  const rawLabels = response.data.labels;
+  const labels = rawLabels.map((ts: number) => new Date(ts));
 
-    channels.forEach((channel) => {
-      newChannelData[channel] = {
-        labels,
-        data: data[channel] || [],
-      };
-    });
+  const newChannelData: { [channel: string]: ChannelData } = {};
+  channels.forEach((channel) => {
+    newChannelData[channel] = {
+      labels,
+      data: response.data[channel] || [],
+    };
+  });
 
     setChannelData(newChannelData);
 
@@ -448,64 +444,71 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
 // Generiraj boje za točke ako je SpO2 kanal
 
 const chartJSData = useMemo(() => {
-  if (multiChannelMode && selectedChannels.length > 0) {
-    const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
+  if (!fileInfo) return { labels: [], datasets: [] };
 
-    // Nađi prvi kanal koji stvarno ima data & labels
-    const firstValid = selectedChannels.find(
-      (channel) => channelData[channel]?.labels?.length
+  const isMulti = multiChannelMode;
+  const startTime = new Date(fileInfo.startTime).getTime();
+
+  if (!isMulti && chartDataState && selectedChannel) {
+    const isSpo2 = selectedChannel.toLowerCase().includes("spo2");
+    const labels = chartDataState.labels.map(
+      (s) => s instanceof Date ? s : new Date(startTime + (typeof s === 'number' ? s : 0) * 1000) // Ensure s is a Date or convert if number
     );
-    const labels = firstValid ? channelData[firstValid]?.labels : [];
+
+    const pointColors = isSpo2
+      ? chartDataState.data.map((value) => (value < 90 ? "red" : "blue"))
+      : [];
 
     return {
       labels,
-      datasets: selectedChannels.map((channel, index) => {
-        const data = channelData[channel]?.data || [];
-        const isSpo2 = channel.toLowerCase().includes("spo2");
-
-        const pointColors = isSpo2
-          ? data.map((value) => (value < 90 ? "red" : "blue"))
-          : [];
-
-        return {
-          label: channel,
-          data,
-          borderColor: colors[index % colors.length],
-          backgroundColor: `${colors[index % colors.length]}33`,
+      datasets: [
+        {
+          label: selectedChannel,
+          data: chartDataState.data,
+          borderColor: "rgb(59, 130, 246)",
+          backgroundColor: "rgba(59, 130, 246, 0.2)",
           tension: 0.4,
           pointRadius: isSpo2 ? 3 : 0,
           pointBackgroundColor: isSpo2 ? pointColors : undefined,
           borderWidth: 1,
-          yAxisID: `y-${index}`, // ako želiš više Y osi
-        };
-      }),
+        },
+      ],
     };
   }
 
-  // Single-channel fallback
-  if (!chartDataState || !selectedChannel) return { labels: [], datasets: [] };
+  // MULTI-CHANNEL mode
+  const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
+  const referenceChannel = selectedChannels[0];
+  const reference = channelData[referenceChannel];
 
-  const isSpo2 = selectedChannel.toLowerCase().includes("spo2");
-  const pointColors = isSpo2
-    ? chartDataState.data.map((value) => (value < 90 ? "red" : "blue"))
-    : [];
+  const labels = reference?.labels?.map(
+    (s) => s instanceof Date ? s : new Date(startTime + (typeof s === 'number' ? s : 0) * 1000)
+  ) || [];
 
-  return {
-    labels: chartDataState.labels,
-    datasets: [
-      {
-        label: selectedChannel,
-        data: chartDataState.data,
-        borderColor: "rgb(59, 130, 246)",
-        backgroundColor: "rgba(59, 130, 246, 0.2)",
-        tension: 0.4,
-        pointRadius: isSpo2 ? 3 : 0,
-        pointBackgroundColor: isSpo2 ? pointColors : undefined,
-        borderWidth: 1,
-      },
-    ],
-  };
-}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel]);
+  const datasets = selectedChannels.map((channel, index) => {
+    const data = channelData[channel]?.data || [];
+    const isSpo2 = channel.toLowerCase().includes("spo2");
+
+    const pointColors = isSpo2
+      ? data.map((value) => (value < 90 ? "red" : "blue"))
+      : [];
+
+    return {
+      label: channel,
+      data,
+      borderColor: colors[index % colors.length],
+      backgroundColor: `${colors[index % colors.length]}33`,
+      tension: 0.4,
+      pointRadius: isSpo2 ? 3 : 0,
+      pointBackgroundColor: isSpo2 ? pointColors : undefined,
+      borderWidth: 1,
+      yAxisID: `y-${index}`,
+    };
+  });
+
+  return { labels, datasets };
+}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo]);
+
 
 
 
@@ -545,13 +548,8 @@ const chartJSData = useMemo(() => {
 
 
   // Chart.js opcije s prilagođenom logikom zooma
- const chartOptions: ChartOptions<'line'> = useMemo(() => {
-  if (!fileInfo || (!selectedChannel && selectedChannels.length === 0)) return {};
-
-  const isMulti = multiChannelMode;
-  const sampleRate = selectedChannel
-    ? fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)]
-    : fileInfo.sampleRates[0];
+const chartOptions: ChartOptions<'line'> = useMemo(() => {
+  if (!fileInfo) return {};
 
   const startTime = new Date(fileInfo.startTime).getTime();
 
@@ -580,6 +578,8 @@ const chartJSData = useMemo(() => {
           display: true,
           text: 'Vrijeme',
         },
+        min: viewport && viewport.start !== undefined ? startTime + viewport.start * 1000 : undefined,
+        max: viewport && viewport.end !== undefined ? startTime + viewport.end * 1000 : undefined,
       },
       y: {
         title: {
@@ -592,17 +592,8 @@ const chartJSData = useMemo(() => {
       tooltip: {
         callbacks: {
           title: (items: TooltipItem<'line'>[]) => {
-            if (!fileInfo || !sampleRate) return items[0].label ?? '';
-            const dataIndex = items[0].dataIndex;
-            const absoluteSampleIndex = currentZoomStart + dataIndex;
-            const timeInSeconds = absoluteSampleIndex / sampleRate;
-            const date = addSeconds(new Date(fileInfo.startTime), timeInSeconds);
-            return date.toLocaleTimeString('hr-HR', {
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit',
-              fractionalSecondDigits: 3,
-            } as Intl.DateTimeFormatOptions);
+            const time = items[0].label;
+            return time;
           },
         },
       },
@@ -611,29 +602,19 @@ const chartJSData = useMemo(() => {
           enabled: true,
           mode: 'x',
           onPanComplete: ({ chart }) => {
-            const xScale = chart.scales.x;
-            const min = xScale.min as number;
-            const max = xScale.max as number;
+            const xScale = chart.scales['x'];
+            const startTime = new Date(fileInfo.startTime).getTime();
+            const start = (xScale.min as number - startTime) / 1000;
+            const end = (xScale.max as number - startTime) / 1000;
 
-            const newStart = (min - startTime) / 1000;
-            const newEnd = (max - startTime) / 1000;
+            if (typeof start === 'number' && typeof end === 'number' && start < end) {
+              setViewport({ start, end });
 
-            if (newEnd - newStart < 1) return;
-
-            setViewport({ start: newStart, end: newEnd });
-
-            if (isMulti) {
-              debouncedFetchMultiChunks(newStart, newEnd);
-            } else {
-              const fetchStartSample = Math.floor(newStart * sampleRate);
-              const fetchNumSamples = Math.ceil((newEnd - newStart) * sampleRate);
-              debouncedFetchEdfChunk(
-                fileInfo.tempFilePath,
-                selectedChannel!,
-                fetchStartSample,
-                fetchNumSamples,
-                sampleRate
-              );
+              if (multiChannelMode) {
+                debouncedFetchMultiChunks(start, end);
+              } else {
+                handleZoomOrPan(start, end);
+              }
             }
           },
         },
@@ -642,55 +623,27 @@ const chartJSData = useMemo(() => {
           pinch: { enabled: true },
           mode: 'x',
           onZoomComplete: ({ chart }) => {
-            const xScale = chart.scales.x;
-            const min = xScale.min as number;
-            const max = xScale.max as number;
+            const xScale = chart.scales['x'];
+            const startTime = new Date(fileInfo.startTime).getTime();
+            const start = (xScale.min as number - startTime) / 1000;
+            const end = (xScale.max as number - startTime) / 1000;
 
-            const newStart = (min - startTime) / 1000;
-            const newEnd = (max - startTime) / 1000;
+            if (typeof start === 'number' && typeof end === 'number' && start < end) {
+              setViewport({ start, end });
 
-            if (newEnd - newStart < 1) return;
-
-            setViewport({ start: newStart, end: newEnd });
-
-            if (isMulti) {
-              debouncedFetchMultiChunks(newStart, newEnd);
-            } else {
-              const fetchStartSample = Math.floor(newStart * sampleRate);
-              const fetchNumSamples = Math.ceil((newEnd - newStart) * sampleRate);
-              debouncedFetchEdfChunk(
-                fileInfo.tempFilePath,
-                selectedChannel!,
-                fetchStartSample,
-                fetchNumSamples,
-                sampleRate
-              );
+              if (multiChannelMode) {
+                debouncedFetchMultiChunks(start, end);
+              } else {
+                handleZoomOrPan(start, end);
+              }
             }
           },
         },
       },
-      legend: {
-        display: true,
-      },
-    },
-    onClick: (event) => {
-      if (typeof event.x === 'number' && chartRef.current) {
-        const x = chartRef.current.scales['x'].getValueForPixel(event.x);
-        if (typeof x === 'number') {
-          setClickedZoomTime(new Date(x));
-        }
-      }
+      legend: { display: true },
     },
   };
-}, [
-  fileInfo,
-  selectedChannel,
-  selectedChannels,
-  multiChannelMode,
-  debouncedFetchEdfChunk,
-  debouncedFetchMultiChunks,
-  currentZoomStart,
-]);
+}, [fileInfo, viewport, multiChannelMode, debouncedFetchMultiChunks, handleZoomOrPan]);
 
 
 
