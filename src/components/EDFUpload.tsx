@@ -392,18 +392,14 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
     console.log(`[DEBUG] Multi-channel fetch: ${timeRange}s range, ${targetPoints} target points`);
     
     try {
-      // Use the efficient multi-channel endpoint instead of individual requests
-      // Calculate sample range based on the first channel's sample rate for consistency
-      const firstChannelIndex = fileInfo.channels.indexOf(selectedChannels[0]);
-      const firstSampleRate = fileInfo.sampleRates[firstChannelIndex];
-      
-      const startSample = Math.floor(boundedStart * firstSampleRate);
-      const endSample = Math.floor(boundedEnd * firstSampleRate);
+      // Use the efficient multi-channel endpoint; send seconds (backend converts)
+      const startSec = boundedStart;
+      const endSec = boundedEnd;
       
       console.log(`[DEBUG] Multi-channel request:`, {
         channels: selectedChannels,
-        startSample,
-        endSample,
+        startSec,
+        endSec,
         targetPoints,
         boundedStart,
         boundedEnd
@@ -418,8 +414,8 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
         params: {
           filePath: fileInfo.tempFilePath,
           channels: JSON.stringify(selectedChannels),
-          start_sample: startSample,
-          end_sample: endSample,
+          start_sec: startSec,
+          end_sec: endSec,
           max_points: targetPoints,
         },
       });
@@ -668,6 +664,10 @@ const chartOptions: ChartOptions<'line'> = useMemo(() => {
       },
     },
     plugins: {
+      decimation: {
+        enabled: true,
+        algorithm: 'min-max',
+      },
       tooltip: {
         callbacks: {
           title: (items: TooltipItem<'line'>[]) => {
