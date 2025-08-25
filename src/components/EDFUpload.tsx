@@ -1,8 +1,6 @@
 import { useRef, useState, useMemo, useEffect, useCallback } from "react";
 import { useDebouncedCallback } from "use-debounce";
-import { FaUpload, FaInfoCircle, FaHeartbeat, FaClock, FaWaveSquare } from "react-icons/fa";
 import axios from "axios";
-import { Line } from "react-chartjs-2";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -20,6 +18,12 @@ import zoomPlugin from "chartjs-plugin-zoom";
 import "chartjs-adapter-date-fns";
 import { enUS } from 'date-fns/locale';
 import { registerables } from 'chart.js';
+import UploadZone from './UploadZone';
+import StatusDisplay from './StatusDisplay';
+import FileInfoDisplay from './FileInfoDisplay';
+import ChannelSelector from './ChannelSelector';
+import ChannelStatsDisplay from './ChannelStatsDisplay';
+import EDFChart from './EDFChart';
 
 
 ChartJS.register(
@@ -86,10 +90,9 @@ export default function EDFUpload() {
 
   // Stanja za upravljanje prikazanim podacima i zumiranjem
   const [chartDataState, setChartDataState] = useState<{ labels: Date[]; data: number[]; } | null>(null);
-  const [currentZoomStart, setCurrentZoomStart] = useState<number>(0); // Početni uzorak
+  // Removed currentZoomStart - now using viewport state for all time tracking
   //const [currentZoomEnd, setCurrentZoomEnd] = useState<number>(0);     // Završni uzorak
   const [isLoadingChunk, setIsLoadingChunk] = useState<boolean>(false);
-  const [clickedZoomTime, setClickedZoomTime] = useState<Date | null>(null);
   const [viewport, setViewport] = useState<{ start: number; end: number } | null>(null);
 
 
@@ -124,7 +127,6 @@ export default function EDFUpload() {
       });
 
       setChartDataState({ labels, data: chunkData });
-      setCurrentZoomStart(startSample);
       //setCurrentZoomEnd(startSample + chunkData.length);
 
     } catch (err: unknown) { // Ispravljen tip za catch block
@@ -160,8 +162,67 @@ export default function EDFUpload() {
       safeMaxPoints
     );
   },
-  300
+  120  // Optimized for smooth, responsive interactions
 );
+const handleZoomOrPan = useCallback(async (startTime: number, endTime: number) => {
+  if (!fileInfo || !selectedChannel) return;
+  
+  const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
+  const startSample = Math.floor(startTime * sampleRate);
+  const endSample = Math.floor(endTime * sampleRate);
+  const numSamples = endSample - startSample;
+
+  if (isNaN(startSample) || isNaN(endSample) || startSample < 0 || numSamples <= 0) return;
+
+
+  
+  // Optimized chunk-based approach with smart downsampling
+  const chartWidth = chartRef.current?.width || 1200;
+  const timeRange = endTime - startTime;
+  
+  // Calculate optimal sample count based on time range and screen width
+  let actualSamples = numSamples;
+  let maxPoints = Math.max(chartWidth * 2, 2000);
+  
+  // Smart downsampling based on time range - prevents laggy performance
+  if (timeRange <= 60) { // 0-1 minute: High detail
+    actualSamples = Math.min(numSamples, 20000);
+    maxPoints = Math.max(chartWidth * 3, 4000);
+  } else if (timeRange <= 600) { // 1-10 minutes: Good detail
+    actualSamples = Math.min(numSamples, 30000);
+    maxPoints = Math.max(chartWidth * 2.5, 3000);
+  } else if (timeRange <= 3600) { // 10min-1 hour: Medium detail
+    actualSamples = Math.min(numSamples, 20000);
+    maxPoints = Math.max(chartWidth * 2, 2500);
+  } else if (timeRange <= 14400) { // 1-4 hours: Lower detail
+    actualSamples = Math.min(numSamples, 10000);
+    maxPoints = Math.max(chartWidth * 1.5, 2000);
+  } else { // 4+ hours: Overview mode - lightweight for performance
+    actualSamples = Math.min(numSamples, 8000); // Reduced for better performance
+    maxPoints = Math.max(chartWidth, 1500); // Fewer points for speed
+  }
+  
+  // Always use chunk-based loading - fastest and most stable
+  debouncedFetchEdfChunk(
+    fileInfo.tempFilePath,
+    selectedChannel,
+    startSample,
+    actualSamples,
+    sampleRate,
+    maxPoints
+  );
+}, [fileInfo, selectedChannel, debouncedFetchEdfChunk]);
+
+// Add missing useEffect for initial data loading
+useEffect(() => {
+  if (!fileInfo || !selectedChannel) return;
+
+  // Load initial view - first 5 minutes for optimal startup performance or entire duration if shorter
+  
+  const initialEndTime = Math.min(300, fileInfo.duration); // First 5 minutes or entire duration if shorter
+  handleZoomOrPan(0, initialEndTime);
+  setViewport({ start: 0, end: initialEndTime });
+}, [selectedChannel, fileInfo, handleZoomOrPan]);
 
     // Toggle multi-channel mode
   const toggleMultiChannelMode = () => {
@@ -200,7 +261,13 @@ const channelDataRef = useRef(channelData);
     for (const channel of selectedChannels) {
       if (!newChannelData[channel] || newChannelData[channel].data.length === 0) {
         const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(channel)];
-        const initialNumSamples = fileInfo.previewData[channel]?.length || 500;
+        // Use a reasonable default number of samples (10 seconds worth of data)
+        const initialNumSamples = Math.min(500, Math.floor(10 * sampleRate));
+
+        console.log(`[DEBUG] Fetching initial data for channel ${channel}:`, {
+          sampleRate,
+          initialNumSamples
+        });
 
         const response = await axios.get<{ data: number[] }>(
           `http://localhost:5000/api/upload/edf-chunk?filePath=${encodeURIComponent(fileInfo.tempFilePath)}&channel=${encodeURIComponent(channel)}&start_sample=0&num_samples=${initialNumSamples}`
@@ -232,175 +299,218 @@ const channelDataRef = useRef(channelData);
   }, [multiChannelMode, selectedChannels, fetchDataForChannels]);
 
 const handleFullNightView = () => {
-  if (!fileInfo) return;
+  if (!fileInfo || !selectedChannel) return;
+  
+  // Get the actual first and last sample timestamps
   const start = 0;
   const end = fileInfo.duration;
+  const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
+  const totalSamples = Math.floor(fileInfo.duration * sampleRate);
+  
+  console.log(`[DEBUG] Full night view: ${start}s to ${end}s (${totalSamples} samples)`);
   setViewport({ start, end });
 
   if (multiChannelMode) {
     debouncedFetchMultiChunks(start, end);
   } else {
-    if (!selectedChannel) return;
-    const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
-    const numSamples = Math.floor(fileInfo.duration * sampleRate);
-    debouncedFetchEdfChunk(
-      fileInfo.tempFilePath,
-      selectedChannel,
-      0,
-      numSamples,
-      sampleRate,
-      2000
-    );
-  }
-};
-const fetchMultiChannelChunk = async (
-  filePath: string,
-  channels: string[],
-  startSample: number,
-  endSample: number,
-  maxPoints: number
-) => {
-  try {
-    const response = await axios.get('/api/upload/edf-multi-chunk', {
+    // For full night view, use downsampling endpoint for proper distribution
+    const chartWidth = chartRef.current?.width || 1200;
+    const targetPoints = Math.min(chartWidth * 1.5, 2500); // Reasonable point count
+    
+    console.log(`[DEBUG] Full night using downsampling: ${totalSamples} → ${targetPoints} points`);
+    
+    // Use downsampling endpoint to get evenly distributed samples across entire night
+    const fetchFullNight = async () => {
+      try {
+        setIsLoadingChunk(true);
+        
+        const response = await axios.get<{
+          data: number[];
+          stats?: ChannelStats;
+        }>(`http://localhost:5000/api/upload/edf-chunk-downsample`, {
       params: {
-        filePath,
-        channels: JSON.stringify(channels),
-        start_sample: startSample,
-        end_sample: endSample,
-        max_points: maxPoints,
+            filePath: fileInfo.tempFilePath,
+            channel: selectedChannel,
+            start_sample: 0, // Start from first sample
+            num_samples: totalSamples, // Use ALL samples
+            target_points: targetPoints, // Downsample to target points
       },
     });
 
-  const rawLabels = response.data.labels;
-  const labels = rawLabels.map((ts: number) => new Date(ts));
+        const chunkData = response.data?.data || [];
+        if (chunkData.length === 0) return;
 
-  const newChannelData: { [channel: string]: ChannelData } = {};
-  channels.forEach((channel) => {
-    newChannelData[channel] = {
-      labels,
-      data: response.data[channel] || [],
+        // Create timestamps evenly distributed across the entire duration
+        const startTimeObj = new Date(fileInfo.startTime);
+        const labels = chunkData.map((_: number, i: number) => 
+          addSeconds(startTimeObj, (i * fileInfo.duration) / chunkData.length)
+        );
+
+        setChartDataState({ labels, data: chunkData });
+        console.log(`[DEBUG] Full night loaded: ${chunkData.length} points from ${totalSamples} samples`);
+      } catch (err) {
+        console.error("Error fetching full night data:", err);
+        setError("Error loading full night view");
+      } finally {
+        setIsLoadingChunk(false);
+      }
     };
-  });
-
-    setChannelData(newChannelData);
-
-    // Move this block inside the try so 'response' is in scope
-    if (response.data.labels && response.data.labels.length > 0) {
-      const start = response.data.labels[0].getTime() / 1000;
-      const end = response.data.labels[response.data.labels.length - 1].getTime() / 1000;
-      setViewport({ start, end });
-    }
-  } catch (error) {
-    console.error('Greška pri dohvaćanju multi-channel podataka:', error);
+    
+    fetchFullNight();
   }
 };
-const debouncedFetchMultiChunk = useDebouncedCallback(
-  (
-    start: number,
-    end: number
-  ) => {
-    if (!fileInfo) return;
-    const sampleRate = fileInfo.sampleRates[0]; // assuming same sample rate
-    const startSample = Math.floor(start * sampleRate);
-    const endSample = Math.ceil(end * sampleRate);
-    const chartWidth = chartRef.current?.width || 800;
-    const maxPoints = chartWidth * 2;
-
-    fetchMultiChannelChunk(fileInfo.tempFilePath, selectedChannels, startSample, endSample, maxPoints);
-  },
-  300
-);
-
-  const handleFileUpload = async (file: File) => {
-    const formData = new FormData();
-    formData.append("file", file);
-
-    setLoading(true);
-    setError(null);
-    setFileInfo(null); // Resetirajte informacije
-    setChartDataState(null); // Resetirajte graf
-
-    try {
-      const response = await axios.post<EDFFileInfo>(
-        "http://localhost:5000/api/upload",
-        formData,
-        { headers: { "Content-Type": "multipart/form-data" } }
-      );
-
-      const initialFileInfo = response.data;
-      setFileInfo(initialFileInfo);
-      setSelectedChannel(initialFileInfo.channels[0]);
-
-      // Početno učitavanje preview podataka u graf
-      if (initialFileInfo.previewData[initialFileInfo.channels[0]]) {
-        const previewDataArr = initialFileInfo.previewData[initialFileInfo.channels[0]];
-        const startTime = new Date(initialFileInfo.startTime);
-        
-        const labels = previewDataArr.map((_, i) => {
-          const newDate = addSeconds(startTime, i / initialFileInfo.sampleRates[0]);
-          return newDate;
-        });
-        setChartDataState({ labels, data: previewDataArr });
-        setCurrentZoomStart(0);
-        //setCurrentZoomEnd(previewDataArr.length);
-      }
-
-    } catch (err: unknown) { // Ispravljen tip za catch block
-      setError("Greška pri obradi EDF fajla. Provjerite format i pokušajte ponovo.");
-      console.error("Upload error:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (e.dataTransfer.files.length > 0) {
-      const file = e.dataTransfer.files[0];
-      if (file.name.endsWith(".edf")) {
-        handleFileUpload(file);
-      }
-    }
-  };
-
-  const handleClick = () => {
-    fileInputRef.current?.click();
-  };
-  //const debouncedFetchEdfChunkRef = useRef(debounce(fetchEdfChunkInternal, 300));
-  // Učitaj nove podatke samo kada se promijeni fajl (fileInfo) ili odabrani kanal (selectedChannel)
-  // Uklonili smo 'chartDataState?.data' iz zavisnosti da spriječimo konstantno re-renderiranje
-  // jer chartDataState ažurira unutar fetchEdfChunkInternal, što bi stvorilo petlju.
-   useEffect(() => {
-    if (!fileInfo || !selectedChannel) return;
-
-    const currentSampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
-    const initialNumSamples = fileInfo.previewData[selectedChannel]?.length || 500;
-    const maxPoints = 2000; // Maksimalan broj uzoraka za dohvaćanje
-
-    if (fileInfo.tempFilePath && selectedChannel && currentSampleRate) {
-        debouncedFetchEdfChunk(fileInfo.tempFilePath, selectedChannel, 0, initialNumSamples, currentSampleRate, maxPoints);
-    }
-  }, [selectedChannel, fileInfo, debouncedFetchEdfChunk]);
-
-
 const debouncedFetchMultiChunks = useDebouncedCallback(
   async (start: number, end: number) => {
     if (!fileInfo || selectedChannels.length === 0) return;
 
-    
-    const sampleRate = fileInfo.sampleRates[0]; // pretpostavka: isti za sve
     const duration = fileInfo.duration;
 
     // ❗ Osiguraj granice uzorkovanja
     const boundedStart = Math.max(0, start);
     const boundedEnd = Math.min(duration, end);
 
-    const startSample = Math.floor(boundedStart * sampleRate);
-    const numSamples = Math.max(0,Math.floor(boundedEnd - boundedStart) * sampleRate);
-    if (numSamples <= 0) return;
+    if (boundedEnd <= boundedStart) return;
+    
+    // Smart multi-channel downsampling based on time range
+    const timeRange = boundedEnd - boundedStart;
+    const chartWidth = chartRef.current?.width || 1200;
+    
+    // Calculate optimal target points based on time range (same logic as single channel)
+    let targetPoints: number;
+    if (timeRange <= 60) { // 0-1 minute: High detail
+      targetPoints = Math.max(chartWidth * 3, 4000);
+    } else if (timeRange <= 600) { // 1-10 minutes: Good detail
+      targetPoints = Math.max(chartWidth * 2.5, 3000);
+    } else if (timeRange <= 3600) { // 10min-1 hour: Medium detail
+      targetPoints = Math.max(chartWidth * 2, 2500);
+    } else if (timeRange <= 14400) { // 1-4 hours: Lower detail
+      targetPoints = Math.max(chartWidth * 1.5, 2000);
+    } else { // 4+ hours: Overview mode
+      targetPoints = Math.max(chartWidth, 1500);
+    }
+    
+    console.log(`[DEBUG] Multi-channel fetch: ${timeRange}s range, ${targetPoints} target points`);
+    
+    try {
+      // Use the efficient multi-channel endpoint instead of individual requests
+      // Calculate sample range based on the first channel's sample rate for consistency
+      const firstChannelIndex = fileInfo.channels.indexOf(selectedChannels[0]);
+      const firstSampleRate = fileInfo.sampleRates[firstChannelIndex];
+      
+      const startSample = Math.floor(boundedStart * firstSampleRate);
+      const endSample = Math.floor(boundedEnd * firstSampleRate);
+      
+      console.log(`[DEBUG] Multi-channel request:`, {
+        channels: selectedChannels,
+        startSample,
+        endSample,
+        targetPoints,
+        boundedStart,
+        boundedEnd
+      });
+
+      const response = await axios.get<{
+        labels: number[];
+        channels: {
+          [channel: string]: number[];
+        };
+      }>(`http://localhost:5000/api/upload/edf-multi-chunk`, {
+        params: {
+          filePath: fileInfo.tempFilePath,
+          channels: JSON.stringify(selectedChannels),
+          start_sample: startSample,
+          end_sample: endSample,
+          max_points: targetPoints,
+        },
+      });
+
+      console.log(`[DEBUG] Multi-channel response:`, {
+        labelCount: response.data.labels?.length || 0,
+        channelCount: Object.keys(response.data.channels || {}).length,
+        channels: Object.keys(response.data.channels || {})
+      });
+
+      // Process the response for each channel
+      const newChannelData: { [channel: string]: ChannelData } = {};
+      const newChannelStats: { [channel: string]: ChannelStats } = {};
+      
+      // Handle timestamp labels from Python response
+      const startTime = new Date(fileInfo.startTime);
+      let labels: Date[] = [];
+      
+      if (response.data.labels && response.data.labels.length > 0) {
+        // Check if the timestamps look reasonable (not epoch-based)
+        const firstTimestamp = response.data.labels[0];
+        const fileStartMs = startTime.getTime();
+        
+        console.log(`[DEBUG] First timestamp: ${firstTimestamp}, File start: ${fileStartMs}`);
+        
+        // If timestamps are close to file start time (within reasonable range), use them directly
+        if (Math.abs(firstTimestamp - fileStartMs) < 86400000 * 365) { // Within 1 year
+          labels = response.data.labels.map((timestamp: number) => new Date(timestamp));
+          console.log(`[DEBUG] Using Python timestamps directly`);
+        } else {
+          // Python timestamps might be relative or epoch-based, calculate proper timestamps
+          console.log(`[DEBUG] Python timestamps seem incorrect, calculating manually`);
+          labels = [];
+        }
+      }
+      
+      for (const channel of selectedChannels) {
+        const channelData = response.data.channels?.[channel];
+        if (!channelData || channelData.length === 0) {
+          console.warn(`No data received for channel ${channel}`);
+          continue;
+        }
+
+        // Use Python timestamps if valid, otherwise calculate based on time range
+        const channelLabels = labels.length === channelData.length ? labels : 
+          channelData.map((_: number, i: number) => 
+            addSeconds(startTime, boundedStart + (i * timeRange) / channelData.length)
+          );
+
+        newChannelData[channel] = { 
+          labels: channelLabels, 
+          data: channelData 
+        };
+        
+        console.log(`[DEBUG] Processed channel ${channel}: ${channelData.length} points`);
+      }
+      
+      // Update state with all channels at once
+      setChannelData(prev => ({ ...prev, ...newChannelData }));
+      setChannelStats(prev => ({ ...prev, ...newChannelStats }));
+      
+      console.log(`[DEBUG] Multi-channel loaded: ${Object.keys(newChannelData).length} channels`);
+      
+    } catch (err) {
+      console.error(`Error fetching multi-channel data:`, err);
+      
+      // Log more details about the error
+      if (axios.isAxiosError(err)) {
+        console.error(`[DEBUG] Axios error details:`, {
+          status: err.response?.status,
+          statusText: err.response?.statusText,
+          data: err.response?.data,
+          message: err.message
+        });
+      }
+      
+      // Fallback to individual channel requests if multi-channel fails
+      console.log(`[DEBUG] Falling back to individual channel requests`);
     
     for (const channel of selectedChannels) {
       try {
+          const channelIndex = fileInfo.channels.indexOf(channel);
+          const sampleRate = fileInfo.sampleRates[channelIndex];
+          
+          if (!sampleRate) continue;
+
+          const startSample = Math.floor(boundedStart * sampleRate);
+          const numSamples = Math.max(0, Math.floor(boundedEnd - boundedStart) * sampleRate);
+          
+          if (numSamples <= 0) continue;
+
         const response = await axios.get<{
           data: number[];
           stats?: ChannelStats;
@@ -410,18 +520,15 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
             channel,
             start_sample: startSample,
             num_samples: numSamples,
-            target_points: 2000, // Maksimalan broj uzoraka za dohvaćanje
+              target_points: targetPoints,
           },
         });
 
         const chunkData = response.data?.data || [];
+          if (chunkData.length === 0) continue;
 
-        if (chunkData.length === 0) {
-          console.warn(`Nema podataka za kanal ${channel}, preskačem...`);
-          continue;
-        }
         const startTime = new Date(fileInfo.startTime);
-        const labels = chunkData.map((_: number, i: number) => addSeconds(startTime, start + i / sampleRate));
+          const labels = chunkData.map((_: number, i: number) => addSeconds(startTime, boundedStart + i / sampleRate));
 
         setChannelData(prev => ({
           ...prev,
@@ -434,117 +541,77 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
             [channel]: response.data.stats as ChannelStats,
           }));
         }
-      } catch (err) {
-        console.error(`Greška pri dohvaćanju podataka za kanal ${channel}:`, err);
+        } catch (channelErr) {
+          console.error(`Error fetching data for channel ${channel}:`, channelErr);
+        }
       }
     }
   },
-  500
+  120  // Optimized for smooth multi-channel interactions
 );
 // Generiraj boje za točke ako je SpO2 kanal
 
 const chartJSData = useMemo(() => {
-  if (!fileInfo) return { labels: [], datasets: [] };
+  // SINGLE CHANNEL MODE
+  if (!multiChannelMode || selectedChannels.length === 0) {
+    if (!chartDataState || !selectedChannel) return { labels: [], datasets: [] };
 
-  const isMulti = multiChannelMode;
-  const startTime = new Date(fileInfo.startTime).getTime();
-
-  if (!isMulti && chartDataState && selectedChannel) {
     const isSpo2 = selectedChannel.toLowerCase().includes("spo2");
-    const labels = chartDataState.labels.map(
-      (s) => s instanceof Date ? s : new Date(startTime + (typeof s === 'number' ? s : 0) * 1000) // Ensure s is a Date or convert if number
-    );
-
-    const pointColors = isSpo2
-      ? chartDataState.data.map((value) => (value < 90 ? "red" : "blue"))
+    const pointColors = isSpo2 && chartDataState.data
+      ? chartDataState.data.map(value => value < 90 ? "red" : "blue")
       : [];
 
     return {
-      labels,
-      datasets: [
-        {
-          label: selectedChannel,
-          data: chartDataState.data,
-          borderColor: "rgb(59, 130, 246)",
-          backgroundColor: "rgba(59, 130, 246, 0.2)",
-          tension: 0.4,
-          pointRadius: isSpo2 ? 3 : 0,
-          pointBackgroundColor: isSpo2 ? pointColors : undefined,
-          borderWidth: 1,
-        },
-      ],
+      labels: chartDataState.labels,
+      datasets: [{
+        label: selectedChannel,
+        data: chartDataState.data,
+        borderColor: "rgb(59, 130, 246)",
+        backgroundColor: "rgba(59, 130, 246, 0.2)",
+        tension: 0.4,
+        pointRadius: isSpo2 ? 3 : 0,
+        pointBackgroundColor: isSpo2 ? pointColors : undefined,
+        borderWidth: 1,
+      }],
     };
   }
 
-  // MULTI-CHANNEL mode
+  // MULTI CHANNEL MODE
+  const firstChannel = selectedChannels[0];
+  const sharedLabels = channelData[firstChannel]?.labels || [];
   const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
-  const referenceChannel = selectedChannels[0];
-  const reference = channelData[referenceChannel];
 
-  const labels = reference?.labels?.map(
-    (s) => s instanceof Date ? s : new Date(startTime + (typeof s === 'number' ? s : 0) * 1000)
-  ) || [];
+  return {
+    labels: sharedLabels, // 💡 SVI KANALE ISTI LABELS!
+    datasets: selectedChannels.map((channel, index) => {
+      const data = channelData[channel]?.data || [];
+      const isSpo2 = channel.toLowerCase().includes("spo2");
 
-  const datasets = selectedChannels.map((channel, index) => {
-    const data = channelData[channel]?.data || [];
-    const isSpo2 = channel.toLowerCase().includes("spo2");
+      const pointColors = isSpo2
+        ? data.map(value => value < 90 ? "red" : "blue")
+        : [];
 
-    const pointColors = isSpo2
-      ? data.map((value) => (value < 90 ? "red" : "blue"))
-      : [];
-
-    return {
-      label: channel,
-      data,
-      borderColor: colors[index % colors.length],
-      backgroundColor: `${colors[index % colors.length]}33`,
-      tension: 0.4,
-      pointRadius: isSpo2 ? 3 : 0,
-      pointBackgroundColor: isSpo2 ? pointColors : undefined,
-      borderWidth: 1,
-      yAxisID: `y-${index}`,
-    };
-  });
-
-  return { labels, datasets };
-}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo]);
+      return {
+        label: channel,
+        data,
+        borderColor: colors[index % colors.length],
+        backgroundColor: `${colors[index % colors.length]}33`,
+        tension: 0.4,
+        pointRadius: isSpo2 ? 3 : 0,
+        pointBackgroundColor: isSpo2 ? pointColors : undefined,
+        borderWidth: 1,
+        yAxisID: `y-${index}`, // ako koristiš više y-osi
+      };
+    }),
+  };
+}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel]);
 
 
 
 
 
-  const handleZoomOrPan = useCallback((startSample: number, endSample: number) => {
-  if (!fileInfo || !selectedChannel) return;
+
   
-  if (isNaN(startSample) || isNaN(endSample) || startSample < 0 || endSample <= startSample) return;
-  const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
-  const numSamples = endSample - startSample;
-
-  const chartWidth = chartRef.current?.width || 0;
-  const maxPoints= chartWidth*2;
-  
-  // Downsample za velike rangeove
-  if (numSamples > 100000) {
-    const downsampledSamples = Math.floor(numSamples / 100);
-    debouncedFetchEdfChunk(
-      fileInfo.tempFilePath,
-      selectedChannel,
-      startSample,
-      downsampledSamples,
-      sampleRate,
-      maxPoints 
-    );
-  } else {
-    debouncedFetchEdfChunk(
-      fileInfo.tempFilePath,
-      selectedChannel,
-      startSample,
-      numSamples,
-      sampleRate,
-      maxPoints
-    );
-  }
-}, [fileInfo, selectedChannel, debouncedFetchEdfChunk]);
 
 
   // Chart.js opcije s prilagođenom logikom zooma
@@ -556,18 +623,26 @@ const chartOptions: ChartOptions<'line'> = useMemo(() => {
   return {
     responsive: true,
     maintainAspectRatio: false,
-    animation: false,
+    animation: {
+      duration: 200, // Short animation for smoother transitions
+      easing: 'easeOutQuart',
+    },
     scales: {
       x: {
         type: 'time',
         time: {
           unit: 'second',
+          stepSize: 1,
           displayFormats: {
             second: 'HH:mm:ss',
             minute: 'HH:mm',
-            hour: 'HH',
+            hour: 'HH:mm',
             day: 'MM-DD',
           },
+          tooltipFormat: 'HH:mm:ss',
+          // Improve time scale stability
+          round: 'second',
+          isoWeekday: false,
         },
         adapters: {
           date: {
@@ -580,6 +655,10 @@ const chartOptions: ChartOptions<'line'> = useMemo(() => {
         },
         min: viewport && viewport.start !== undefined ? startTime + viewport.start * 1000 : undefined,
         max: viewport && viewport.end !== undefined ? startTime + viewport.end * 1000 : undefined,
+        ticks: {
+          maxTicksLimit: 10,
+          autoSkip: true,
+        },
       },
       y: {
         title: {
@@ -608,6 +687,7 @@ const chartOptions: ChartOptions<'line'> = useMemo(() => {
             const end = (xScale.max as number - startTime) / 1000;
 
             if (typeof start === 'number' && typeof end === 'number' && start < end) {
+              console.log(`[DEBUG] Pan complete: ${start}s to ${end}s`);
               setViewport({ start, end });
 
               if (multiChannelMode) {
@@ -629,6 +709,7 @@ const chartOptions: ChartOptions<'line'> = useMemo(() => {
             const end = (xScale.max as number - startTime) / 1000;
 
             if (typeof start === 'number' && typeof end === 'number' && start < end) {
+              console.log(`[DEBUG] Zoom complete: ${start}s to ${end}s`);
               setViewport({ start, end });
 
               if (multiChannelMode) {
@@ -650,17 +731,7 @@ const chartOptions: ChartOptions<'line'> = useMemo(() => {
 
 // State for zoom time (double-clicked time on chart)
 
-useEffect(() => {
-  if (!clickedZoomTime || !fileInfo) return;
-
-  const zoomRange = 30; // sekundi
-  const center = clickedZoomTime.getTime() / 1000;
-  const start = Math.max(0, center - zoomRange);
-  const end = Math.min(fileInfo.duration, center + zoomRange);
-
-  setViewport({ start, end });
-  debouncedFetchMultiChunks(start, end);
-}, [clickedZoomTime, fileInfo, debouncedFetchMultiChunks]);
+// Removed problematic useEffect that was causing issues
   // Ažuriranje statistike za odabrani kanal (sada na temelju dohvaćenih podataka)
 
 
@@ -668,228 +739,149 @@ useEffect(() => {
 const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasElement, MouseEvent>) => {
   if (!chartRef.current || !fileInfo || !selectedChannel) return;
   const chart = chartRef.current;
-  const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
-  const totalSamples = Math.floor(fileInfo.duration * sampleRate);
 
-  // Dohvati X koordinatu klika
+    // Get the clicked point using Chart.js API
   const points = chart.getElementsAtEventForMode(event.nativeEvent, 'nearest', { intersect: false }, false);
   if (!points.length) return;
+    
   const firstPoint = points[0];
   const dataIndex = firstPoint.index;
 
-  // Izračunaj vrijeme (ili sample) oko kojeg se zumira
-  const zoomSeconds = 200; // npr. 30 sekundi interval
-  const centerSample = currentZoomStart + dataIndex;
-  const startSample = Math.max(0, centerSample - Math.floor(zoomSeconds * sampleRate / 2));
-  const endSample = Math.min(totalSamples, centerSample + Math.floor(zoomSeconds * sampleRate / 2));
-  const numSamples = endSample - startSample;
+    // Get the actual time value from the chart data
+    const clickedTime = chartDataState?.labels?.[dataIndex];
+    if (!clickedTime) return;
+    
+    // Convert clicked time to seconds from start
+    const startTime = new Date(fileInfo.startTime).getTime();
+    const clickedTimeMs = clickedTime instanceof Date ? clickedTime.getTime() : new Date(clickedTime).getTime();
+    const centerTimeSeconds = (clickedTimeMs - startTime) / 1000;
+    
+    // Define zoom window (5 minutes around clicked point for detailed analysis)
+    const zoomWindowSeconds = 300; // 5 minutes - now safe with 15-minute threshold
+    const halfWindow = zoomWindowSeconds / 2;
+    
+    const startTime_s = Math.max(0, centerTimeSeconds - halfWindow);
+    const endTime_s = Math.min(fileInfo.duration, centerTimeSeconds + halfWindow);
+    
+    console.log(`[DEBUG] Double-click zoom: center=${centerTimeSeconds}s, window=${startTime_s}s to ${endTime_s}s`);
+    
+    // Update viewport and load data using the consistent handleZoomOrPan function
+    setViewport({ start: startTime_s, end: endTime_s });
+    handleZoomOrPan(startTime_s, endTime_s);
+  }, [chartRef, fileInfo, selectedChannel, chartDataState, handleZoomOrPan]);
+  
 
-  // Pozovi fetch za taj raspon (koristi debouncedFetchEdfChunk)
-  const chartWidth = chart.width || 800;
-  const maxPoints = chartWidth * 2;
-  debouncedFetchEdfChunk(
-    fileInfo.tempFilePath,
-    selectedChannel,
-    startSample,
-    numSamples,
-    sampleRate,
-    maxPoints
-  );
-}, [chartRef, fileInfo, selectedChannel, currentZoomStart, debouncedFetchEdfChunk]);
+  // Restore file upload handlers
+  const handleFileUpload = async (file: File) => {
+    console.log("[DEBUG] Starting file upload for:", file.name);
+    const formData = new FormData();
+    formData.append("file", file);
 
+    setLoading(true);
+    setError(null);
+    setFileInfo(null); // Resetirajte informacije
+    setChartDataState(null); // Resetirajte graf
 
+    try {
+      console.log("[DEBUG] Sending request to backend...");
+      const response = await axios.post<EDFFileInfo>(
+        "http://localhost:5000/api/upload",
+        formData,
+        { headers: { "Content-Type": "multipart/form-data" } }
+      );
+
+      console.log("[DEBUG] Backend response:", response.data);
+      const initialFileInfo = response.data;
+      setFileInfo(initialFileInfo);  
+      setSelectedChannel(initialFileInfo.channels[0]);
+
+      // Početno učitavanje preview podataka u graf
+      if (initialFileInfo.previewData[initialFileInfo.channels[0]]) {
+        const previewDataArr = initialFileInfo.previewData[initialFileInfo.channels[0]];
+        const startTime = new Date(initialFileInfo.startTime);
+
+        const labels = previewDataArr.map((_, i) => {
+          const newDate = addSeconds(startTime, i / initialFileInfo.sampleRates[0]);
+          return newDate;
+        });
+        setChartDataState({ labels, data: previewDataArr });
+        //setCurrentZoomEnd(previewDataArr.length);
+      }
+    } catch (err: unknown) {
+      console.error("[ERROR] Upload error:", err);
+      if (axios.isAxiosError(err)) {
+        console.error("[ERROR] Axios error details:", err.response?.data);
+        setError(`Greška pri obradi EDF fajla: ${err.response?.data?.error || err.message}`);
+      } else {
+        setError("Greška pri obradi EDF fajla. Provjerite format i pokušajte ponovo.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      if (file.name.endsWith(".edf")) {
+        handleFileUpload(file);
+      }
+    }
+  };
+
+  const handleClick = () => {
+    fileInputRef.current?.click();
+  };
 
   return (
     <div className="w-full max-w-4xl mx-auto p-4">
       {/* Upload zona */}
-      <div
-        onClick={handleClick}
-        onDrop={handleDrop}
-        onDragOver={(e) => e.preventDefault()}
-        className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer"
-      >
-        <div className="flex flex-col items-center text-gray-600">
-          <FaUpload className="w-12 h-12 mb-4" />
-          <p className="text-lg font-medium">Povucite EDF fajl ovdje</p>
-          <p className="text-sm text-gray-500 mt-2">ili kliknite za odabir</p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            className="hidden"
-            onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
-            accept=".edf"
-          />
-        </div>
-      </div>
-
+      <UploadZone
+        fileInputRef={fileInputRef as React.RefObject<HTMLInputElement>}
+        handleFileUpload={handleFileUpload}
+        handleClick={handleClick}
+        handleDrop={handleDrop}
+      />
       {/* Status */}
-      {loading && (
-        <div className="mt-4 p-4 bg-blue-50 rounded-lg flex items-center gap-2">
-          <FaHeartbeat className="w-5 h-5 animate-pulse text-blue-600" />
-          <span className="text-blue-600">Obrada u tijeku...</span>
-        </div>
-      )}
-
-      {isLoadingChunk && (
-        <div className="mt-4 p-4 bg-yellow-50 rounded-lg flex items-center gap-2">
-          <FaHeartbeat className="w-5 h-5 animate-pulse text-yellow-600" />
-          <span className="ml-2 text-yellow-600">Učitavanje...</span>
-        </div>
-      )}
-
-      {error && (
-        <div className="mt-4 p-4 bg-red-50 rounded-lg flex items-center gap-2">
-          <FaInfoCircle className="w-5 h-5 text-red-600" />
-          <span className="text-red-600">{error}</span>
-        </div>
-      )}
-
+      <StatusDisplay loading={loading} isLoadingChunk={isLoadingChunk} error={error} />
       {/* Prikaz informacija o EDF fajlu */}
       {fileInfo && (
         <div className="mt-8 space-y-8">
           {/* Glavne metrike */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-white rounded-lg shadow p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <FaWaveSquare className="w-5 h-5 text-blue-600" />
-                <h3 className="font-semibold">Kanali</h3>
-              </div>
-              <p className="text-2xl font-bold">{fileInfo.channels.length}</p>
-            </div>
-            <div className="bg-white rounded-lg shadow p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <FaHeartbeat className="w-5 h-5 text-green-600" />
-                <h3 className="font-semibold">Sample rate</h3>
-              </div>
-              {/* Prikaz prvog sample rate-a ili prilagođeno ako ih ima više */}
-              <p className="text-2xl font-bold">{fileInfo.sampleRates[0]} Hz</p>
-            </div>
-            <div className="bg-white rounded-lg shadow p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <FaClock className="w-5 h-5 text-purple-600" />
-                <h3 className="font-semibold">Trajanje</h3>
-              </div>
-              <p className="text-2xl font-bold">{fileInfo.duration.toFixed(1)}s</p>
-            </div>
-            <div className="bg-white rounded-lg shadow p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <FaInfoCircle className="w-5 h-5 text-orange-600" />
-                <h3 className="font-semibold">Početak</h3>
-              </div>
-              <p className="text-lg">{fileInfo.startTime}</p>
-            </div>
-          </div>
-
+          <FileInfoDisplay fileInfo={fileInfo} />
           {/* Detaljne informacije i graf */}
-          {/* Multi-channel toggle */}
-          <div className="mb-4 flex items-center">
-            <label className="flex items-center cursor-pointer">
-              <div className="relative">
-                <input 
-                  type="checkbox" 
-                  className="sr-only" 
-                  checked={multiChannelMode}
-                  onChange={toggleMultiChannelMode}
-                />
-                <div className={`block w-14 h-8 rounded-full transition ${multiChannelMode ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
-                <div className={`absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${multiChannelMode ? 'transform translate-x-6' : ''}`}></div>
-              </div>
-              <div className="ml-3 text-gray-700 font-medium">
-                Multi-Channel Display
-              </div>
-            </label>
-          </div>
-
-          {/* Channel Selection */}
-          {fileInfo && (
-            <div className="mb-6">
-              <h3 className="text-lg font-medium mb-2">Select Channels:</h3>
-              
-              {multiChannelMode ? (
-                // Checkbox list for multi-channel mode
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                  {fileInfo.channels.map((channel, index) => (
-                    <label key={`${channel}-${index}`}className="flex items-center">
-                      <input
-                        type="checkbox"
-                        className="form-checkbox h-5 w-5 text-blue-600"
-                        checked={selectedChannels.includes(channel)}
-                        onChange={() => handleChannelSelect(channel)}
-                        disabled={selectedChannels.length >= 5 && !selectedChannels.includes(channel)}
-                      />
-                      <span className="ml-2 text-gray-700">{channel}</span>
-                    </label>
-                  ))}
-                </div>
-              ) : (
-                // Dropdown for single-channel mode
-                <select
-                  value={selectedChannel || ''}
-                  onChange={(e) => setSelectedChannel(e.target.value)}
-                  className="w-full p-2 border rounded-md"
-                >
-                  {fileInfo.channels.map((channel, index) => (
-                     <option key={`${channel}-${index}`} value={channel}>
-                      {channel}
-                    </option>
-                  ))}
-                </select>
-              )}
-              
-              {multiChannelMode && (
-                <p className="mt-2 text-sm text-gray-500">
-                  {selectedChannels.length}/5 channels selected
-                </p>
-                
-              )}
-            </div>
-          )}
-
+          {/* Channel Selection and Multi-channel toggle */}
+          <ChannelSelector
+            fileInfo={fileInfo}
+            multiChannelMode={multiChannelMode}
+            selectedChannel={selectedChannel}
+            selectedChannels={selectedChannels}
+            toggleMultiChannelMode={toggleMultiChannelMode}
+            setSelectedChannel={setSelectedChannel}
+            handleChannelSelect={handleChannelSelect}
+          />
           {/* Statistika */}
-          {channelStats && Object.keys(channelStats).length > 0 && (
-            <div className="mb-4 text-sm bg-gray-50 p-4 rounded-lg">
-              {Object.keys(channelStats).map((channel) => (
-                <div key={channel} className="mb-2 grid grid-cols-2 sm:grid-cols-3 gap-4">
-                  <strong>{channel}</strong>
-                  <div><b>Prosjek:</b> {channelStats[channel].mean.toFixed(2)}</div>
-                  <div><b>Medijan:</b> {channelStats[channel].median.toFixed(2)}</div>
-                  <div><b>Min:</b> {channelStats[channel].min.toFixed(2)}</div>
-                  <div><b>Max:</b> {channelStats[channel].max.toFixed(2)}</div>
-                  <div><b>Std dev:</b> {channelStats[channel].stddev.toFixed(2)}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
+          <ChannelStatsDisplay channelStats={channelStats} />
           {/* Graf na cijeloj širini */}
           <div className="bg-white rounded-xl shadow p-4">
             <div className="flex justify-between items-center mb-4">
               <h4 className="text-lg font-medium"></h4>
               <button
                 onClick={handleFullNightView}
-                 className="bg-black text-white px-6 py-2
-                            rounded -xl shadow-md hover:from-blue-700 hover:via-indigo-800 hover:to-blue-950 hover:scale-105
-                            transition duration-200 font-semibold tracking-wide flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
+                className="bg-black text-white px-6 py-2 rounded -xl shadow-md hover:from-blue-700 hover:via-indigo-800 hover:to-blue-950 hover:scale-105 transition duration-200 font-semibold tracking-wide flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
               >
                 Pregled cijele snimke
               </button>
             </div>
-
-            <div className="relative h-[500px] w-full">
-              {isLoadingChunk && (
-                <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 z-10 rounded-lg">
-                  <FaHeartbeat className="w-8 h-8 animate-pulse text-blue-500" />
-                  <span className="ml-2 text-blue-700">Učitavanje...</span>
-                </div>
-              )}
-              <Line
-                ref={chartRef}
-                data={chartJSData}
-                options={chartOptions}
-                onDoubleClick={handleChartDoubleClick} // Dodano za double-click zoom
-                height ={500} // Postavljeno visina grafa
-              />
-            </div>
+            <EDFChart
+              chartRef={chartRef}
+              chartJSData={chartJSData}
+              chartOptions={chartOptions}
+              isLoadingChunk={isLoadingChunk}
+              handleChartDoubleClick={handleChartDoubleClick}
+              height={500}
+            />
           </div>
         </div>
       )}
