@@ -94,6 +94,8 @@ export default function EDFUpload() {
   //const [currentZoomEnd, setCurrentZoomEnd] = useState<number>(0);     // Završni uzorak
   const [isLoadingChunk, setIsLoadingChunk] = useState<boolean>(false);
   const [viewport, setViewport] = useState<{ start: number; end: number } | null>(null);
+  const [startTime, setStartTime] = useState<string>("");
+  const [endTime, setEndTime] = useState<string>("");
 
 
   // Referenca na ChartJS instancu - tip specificiran za 'line' graf
@@ -148,7 +150,7 @@ export default function EDFUpload() {
     sampleRate: number,
     maxPoints: number = 2000 // Maksimalan broj uzoraka za dohvaćanje
   ) => {
-    // 🔧 Osiguraj da su vrijednosti cijeli brojevi
+    // Osiguraj da su vrijednosti cijeli brojevi
     const roundedStartSample = Math.floor(startSample);
     const roundedNumSamples = Math.floor(numSamples);
     const safeMaxPoints = Math.floor(maxPoints);
@@ -429,48 +431,32 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
       // Process the response for each channel
       const newChannelData: { [channel: string]: ChannelData } = {};
       const newChannelStats: { [channel: string]: ChannelStats } = {};
-      
-      // Handle timestamp labels from Python response
-      const startTime = new Date(fileInfo.startTime);
-      let labels: Date[] = [];
-      
-      if (response.data.labels && response.data.labels.length > 0) {
-        // Check if the timestamps look reasonable (not epoch-based)
-        const firstTimestamp = response.data.labels[0];
-        const fileStartMs = startTime.getTime();
-        
-        console.log(`[DEBUG] First timestamp: ${firstTimestamp}, File start: ${fileStartMs}`);
-        
-        // If timestamps are close to file start time (within reasonable range), use them directly
-        if (Math.abs(firstTimestamp - fileStartMs) < 86400000 * 365) { // Within 1 year
-          labels = response.data.labels.map((timestamp: number) => new Date(timestamp));
-          console.log(`[DEBUG] Using Python timestamps directly`);
-        } else {
-          // Python timestamps might be relative or epoch-based, calculate proper timestamps
-          console.log(`[DEBUG] Python timestamps seem incorrect, calculating manually`);
-          labels = [];
-        }
+
+      // Prefer backend labels (absolute ms) when provided and aligned
+      let labelsFromBackend: Date[] | null = null;
+      if (Array.isArray(response.data.labels) && response.data.labels.length > 0) {
+        labelsFromBackend = response.data.labels.map((ms) => new Date(ms));
       }
-      
+
       for (const channel of selectedChannels) {
-        const channelData = response.data.channels?.[channel];
-        if (!channelData || channelData.length === 0) {
+        const series = response.data.channels?.[channel];
+        if (!series || series.length === 0) {
           console.warn(`No data received for channel ${channel}`);
           continue;
         }
 
-        // Use Python timestamps if valid, otherwise calculate based on time range
-        const channelLabels = labels.length === channelData.length ? labels : 
-          channelData.map((_: number, i: number) => 
-            addSeconds(startTime, boundedStart + (i * timeRange) / channelData.length)
+        let labels: Date[];
+        if (labelsFromBackend && labelsFromBackend.length === series.length) {
+          labels = labelsFromBackend;
+        } else {
+          const base = new Date(fileInfo.startTime);
+          labels = series.map((_: number, i: number) =>
+            addSeconds(base, boundedStart + (i * timeRange) / series.length)
           );
+        }
 
-        newChannelData[channel] = { 
-          labels: channelLabels, 
-          data: channelData 
-        };
-        
-        console.log(`[DEBUG] Processed channel ${channel}: ${channelData.length} points`);
+        newChannelData[channel] = { labels, data: series };
+        console.log(`[DEBUG] Processed channel ${channel}: ${series.length} points`);
       }
       
       // Update state with all channels at once
@@ -502,9 +488,9 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
           
           if (!sampleRate) continue;
 
-          const startSample = Math.floor(boundedStart * sampleRate);
+    const startSample = Math.floor(boundedStart * sampleRate);
           const numSamples = Math.max(0, Math.floor(boundedEnd - boundedStart) * sampleRate);
-          
+    
           if (numSamples <= 0) continue;
 
         const response = await axios.get<{
@@ -565,7 +551,7 @@ const chartJSData = useMemo(() => {
         borderColor: "rgb(59, 130, 246)",
         backgroundColor: "rgba(59, 130, 246, 0.2)",
         tension: 0.4,
-        pointRadius: isSpo2 ? 3 : 0,
+        pointRadius: isSpo2 ? 1 : 0,
         pointBackgroundColor: isSpo2 ? pointColors : undefined,
         borderWidth: 1,
       }],
@@ -573,12 +559,36 @@ const chartJSData = useMemo(() => {
   }
 
   // MULTI CHANNEL MODE
+  // Always synthesize shared labels from viewport if available to ensure alignment
   const firstChannel = selectedChannels[0];
-  const sharedLabels = channelData[firstChannel]?.labels || [];
+  let sharedLabels: Date[] = [];
+  if (viewport && fileInfo) {
+    // Prefer length from first channel data, else from any non-empty channel
+    let n = channelData[firstChannel]?.data?.length || 0;
+    if (n === 0) {
+      for (const ch of selectedChannels) {
+        n = channelData[ch]?.data?.length || 0;
+        if (n > 0) break;
+      }
+    }
+    if (n > 0) {
+      const base = new Date(fileInfo.startTime);
+      const range = viewport.end - viewport.start;
+      sharedLabels = Array.from({ length: n }, (_, i) =>
+        addSeconds(base, viewport.start + (i * range) / n)
+      );
+    }
+  } else {
+    // Fallback: use first available labels
+    for (const ch of selectedChannels) {
+      const lbls = channelData[ch]?.labels;
+      if (lbls && lbls.length > 0) { sharedLabels = lbls; break; }
+    }
+  }
   const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
 
   return {
-    labels: sharedLabels, // 💡 SVI KANALE ISTI LABELS!
+    labels: sharedLabels, //  SVI KANALE ISTI LABELS!
     datasets: selectedChannels.map((channel, index) => {
       const data = channelData[channel]?.data || [];
       const isSpo2 = channel.toLowerCase().includes("spo2");
@@ -593,14 +603,14 @@ const chartJSData = useMemo(() => {
         borderColor: colors[index % colors.length],
         backgroundColor: `${colors[index % colors.length]}33`,
         tension: 0.4,
-        pointRadius: isSpo2 ? 3 : 0,
+        pointRadius: isSpo2 ? 1 : 0,
         pointBackgroundColor: isSpo2 ? pointColors : undefined,
         borderWidth: 1,
         yAxisID: `y-${index}`, // ako koristiš više y-osi
       };
     }),
   };
-}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel]);
+}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo, viewport]);
 
 
 
@@ -834,6 +844,89 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
     fileInputRef.current?.click();
   };
 
+const timeToSeconds = (time: string): number => {
+  // Accepts "HH:MM" or "HH:MM:SS"
+  const parts = time.split(":").map((v) => Number(v));
+  if (parts.length === 2) {
+    const [h, m] = parts;
+    if (Number.isNaN(h) || Number.isNaN(m)) return NaN;
+    return h * 3600 + m * 60;
+  }
+  if (parts.length === 3) {
+    const [h, m, s] = parts;
+    if (Number.isNaN(h) || Number.isNaN(m) || Number.isNaN(s)) return NaN;
+    return h * 3600 + m * 60 + s;
+  }
+  return NaN;
+}
+
+// Convert user input time (HH:MM format) to seconds from file start
+const timeInputToFileSeconds = (timeInput: string, fileInfo: EDFFileInfo): number => {
+  const inputSeconds = timeToSeconds(timeInput);
+  if (Number.isNaN(inputSeconds)) return NaN;
+  
+  // Parse file start time
+  const fileStartDate = new Date(fileInfo.startTime);
+  const fileStartHours = fileStartDate.getHours();
+  const fileStartMinutes = fileStartDate.getMinutes();
+  const fileStartSeconds = fileStartDate.getSeconds();
+  const fileStartTotalSeconds = fileStartHours * 3600 + fileStartMinutes * 60 + fileStartSeconds;
+  
+  // Calculate seconds from file start
+  let secondsFromFileStart = inputSeconds - fileStartTotalSeconds;
+  
+  // Handle day boundary crossings
+  if (secondsFromFileStart < 0) {
+    // User time is in the next day
+    secondsFromFileStart += 24 * 3600;
+  }
+  
+  // Ensure it's within file duration
+  if (secondsFromFileStart < 0 || secondsFromFileStart > fileInfo.duration) {
+    return NaN; // Time is outside recording range
+  }
+  
+  return secondsFromFileStart;
+}
+function handleCustomInterval() {
+  if (!fileInfo || !startTime || !endTime) return;
+
+  // Convert real clock times to file-relative seconds
+  const startSec = timeInputToFileSeconds(startTime, fileInfo);
+  const endSec = timeInputToFileSeconds(endTime, fileInfo);
+
+  if (Number.isNaN(startSec) || Number.isNaN(endSec)) {
+    const fileStartDate = new Date(fileInfo.startTime);
+    const fileStartTime = `${fileStartDate.getHours().toString().padStart(2, '0')}:${fileStartDate.getMinutes().toString().padStart(2, '0')}`;
+    const fileEndDate = new Date(fileStartDate.getTime() + fileInfo.duration * 1000);
+    const fileEndTime = `${fileEndDate.getHours().toString().padStart(2, '0')}:${fileEndDate.getMinutes().toString().padStart(2, '0')}`;
+    
+    alert(`Invalid time or time outside recording range.\nRecording time: ${fileStartTime} - ${fileEndTime}\nUse format HH:MM or HH:MM:SS`);
+    return;
+  }
+
+  if (endSec <= startSec) {
+    alert("End time must be after start time");
+    return;
+  }
+
+  const boundedStart = Math.max(0, Math.min(startSec, fileInfo.duration));
+  const boundedEnd = Math.max(boundedStart + 1, Math.min(endSec, fileInfo.duration));
+
+  console.log(`[DEBUG] Custom interval: ${startTime}-${endTime} → ${boundedStart}s-${boundedEnd}s from file start`);
+  
+  // Set viewport to the requested time range
+  setViewport({ start: boundedStart, end: boundedEnd });
+
+  // Use existing zoom/pan fetchers for consistency
+  if (multiChannelMode) {
+    debouncedFetchMultiChunks(boundedStart, boundedEnd);
+  } else {
+    handleZoomOrPan(boundedStart, boundedEnd);
+  }
+}
+
+
   return (
     <div className="w-full max-w-4xl mx-auto p-4">
       {/* Upload zona */}
@@ -865,11 +958,47 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
           <ChannelStatsDisplay channelStats={channelStats} />
           {/* Graf na cijeloj širini */}
           <div className="bg-white rounded-xl shadow p-4">
+            {/* Custom Time Interval Section */}
+            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+              <h4 className="text-sm font-medium text-gray-700 mb-2">Custom Time Interval</h4>
+              {fileInfo && (
+                <div className="text-xs text-gray-600 mb-2">
+                  Recording time: {new Date(fileInfo.startTime).toLocaleTimeString('en-GB', { hour12: false })} - {new Date(new Date(fileInfo.startTime).getTime() + fileInfo.duration * 1000).toLocaleTimeString('en-GB', { hour12: false })}
+                </div>
+              )}
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium text-gray-600">From:</label>
+                  <input 
+                    type="time" 
+                    value={startTime} 
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="border border-gray-300 rounded px-2 py-1 text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium text-gray-600">To:</label>
+                  <input 
+                    type="time" 
+                    value={endTime} 
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className="border border-gray-300 rounded px-2 py-1 text-sm"
+                  />
+                </div>
+                <button 
+                  onClick={handleCustomInterval} 
+                  className="bg-blue-600 text-white px-4 py-1 rounded text-sm hover:bg-blue-700 transition duration-200"
+                >
+                  Show interval
+                </button>
+              </div>
+            </div>
+            
             <div className="flex justify-between items-center mb-4">
-              <h4 className="text-lg font-medium"></h4>
+              <h4 className="text-lg font-medium">EDF Signal Visualization</h4>
               <button
                 onClick={handleFullNightView}
-                className="bg-black text-white px-6 py-2 rounded -xl shadow-md hover:from-blue-700 hover:via-indigo-800 hover:to-blue-950 hover:scale-105 transition duration-200 font-semibold tracking-wide flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
+                className="bg-black text-white px-6 py-2 rounded-xl shadow-md hover:from-blue-700 hover:via-indigo-800 hover:to-blue-950 hover:scale-105 transition duration-200 font-semibold tracking-wide flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
               >
                 Pregled cijele snimke
               </button>
