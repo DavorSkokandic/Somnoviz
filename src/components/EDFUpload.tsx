@@ -101,126 +101,149 @@ export default function EDFUpload() {
   // Referenca na ChartJS instancu - tip specificiran za 'line' graf
   const chartRef = useRef<Chart<'line'> | null>(null);
 
-  // Interna funkcija za dohvaćanje chunkova (prije debouncanja)
-  const fetchEdfChunkInternal = useCallback(async (
-    filePath: string,
-    channel: string,
-    startSample: number,
-    numSamples: number,
-    sampleRate: number, // Dodajte sampleRate kao argument
-    maxPoints: number = 2000 // Maksimalan broj uzoraka za dohvaćanje
-  ):Promise<void> => {
-    if (isLoadingChunk) return;
-    setIsLoadingChunk(true);
-    setError(null);
+  // OLD: Removed unused fetchEdfChunkInternal - now using simplified downsampling approach
 
-    try {
-      const response = await axios.get<{ data: number[] }>(
-        `http://localhost:5000/api/upload/edf-chunk?filePath=${encodeURIComponent(filePath)}&channel=${encodeURIComponent(channel)}&start_sample=${Math.floor(startSample)}&num_samples=${Math.floor(numSamples)}&max_points=${maxPoints}`,
-      );
+  // OLD: Removed unused debouncedFetchEdfChunk - now using simplified approach
 
-      const chunkData = response.data.data;
-      const startTime = new Date(fileInfo!.startTime);
+// NEW: Simplified data fetching using downsampling endpoint
+const fetchDownsampledData = useCallback(async (
+  filePath: string,
+  channel: string,
+  startSample: number,
+  numSamples: number,
+  targetPoints: number,
+  startTime: number,
+  endTime: number
+) => {
+  if (isLoadingChunk) return;
+  setIsLoadingChunk(true);
+  setError(null);
 
-      const labels = chunkData.map((_, i) => {
-        const absoluteSampleIndex = startSample + i;
-        const newDate = addSeconds(startTime, absoluteSampleIndex / sampleRate);
-        return newDate;
-      });
+  console.log(`[DEBUG] fetchDownsampledData:`, {
+    channel,
+    startSample,
+    numSamples,
+    targetPoints,
+    startTime,
+    endTime
+  });
 
-      setChartDataState({ labels, data: chunkData });
-      //setCurrentZoomEnd(startSample + chunkData.length);
-
-    } catch (err: unknown) { // Ispravljen tip za catch block
-      console.error("Greška pri dohvaćanju EDF chunka:", err);
-      setError("Greška pri učitavanju dijela signala.");
-    } finally {
-      setIsLoadingChunk(false);
-    }
-  }, [fileInfo, isLoadingChunk]); // Uklonjeni currentZoomStart/End iz deps-a
-
-  // Debouncana verzija funkcije za dohvaćanje chunkova
-  // useMemo osigurava da se debouncana funkcija stvara samo kada se promijeni fetchEdfChunkInternal.
- const debouncedFetchEdfChunk = useDebouncedCallback(
-  (
-    filePath: string,
-    channel: string,
-    startSample: number,
-    numSamples: number,
-    sampleRate: number,
-    maxPoints: number = 2000 // Maksimalan broj uzoraka za dohvaćanje
-  ) => {
-    // Osiguraj da su vrijednosti cijeli brojevi
-    const roundedStartSample = Math.floor(startSample);
-    const roundedNumSamples = Math.floor(numSamples);
-    const safeMaxPoints = Math.floor(maxPoints);
-
-    fetchEdfChunkInternal(
-      filePath,
-      channel,
-      roundedStartSample,
-      roundedNumSamples,
-      sampleRate,
-      safeMaxPoints
+  try {
+    const response = await axios.get<{ data: number[] }>(
+      `http://localhost:5000/api/upload/edf-chunk-downsample`,
+      {
+        params: {
+          filePath: filePath,
+          channel: channel,
+          start_sample: startSample,
+          num_samples: numSamples,
+          target_points: targetPoints
+        }
+      }
     );
-  },
-  120  // Optimized for smooth, responsive interactions
+
+    const chunkData = response.data.data;
+    console.log(`[DEBUG] Received ${chunkData.length} downsampled points for ${channel}`);
+
+    if (!chunkData || chunkData.length === 0) {
+      console.warn(`[WARN] No data received for channel ${channel}`);
+      setError(`No data available for channel ${channel}.`);
+      return;
+    }
+
+    // Generate labels based on the requested time range
+    const fileStartTime = new Date(fileInfo!.startTime);
+    const labels = chunkData.map((_, i) => {
+      const timeOffset = startTime + (i * (endTime - startTime)) / chunkData.length;
+      return addSeconds(fileStartTime, timeOffset);
+    });
+
+    console.log(`[DEBUG] Generated ${labels.length} labels from ${startTime}s to ${endTime}s`);
+
+    setChartDataState({ labels, data: chunkData });
+
+  } catch (err: unknown) {
+    console.error("Error fetching downsampled data:", err);
+    if (axios.isAxiosError(err)) {
+      console.error("Axios error details:", {
+        status: err.response?.status,
+        statusText: err.response?.statusText,
+        data: err.response?.data,
+        message: err.message
+      });
+      setError(`Error fetching data: ${err.response?.status} ${err.response?.statusText || err.message}`);
+    } else {
+      setError("Error loading data.");
+    }
+  } finally {
+    setIsLoadingChunk(false);
+  }
+}, [fileInfo, isLoadingChunk]);
+
+// Debounced version of fetchDownsampledData for smooth interactions
+const debouncedFetchDownsampledData = useDebouncedCallback(
+  fetchDownsampledData,
+  150 // Fast response for smooth UX
 );
+
+// NEW SIMPLIFIED APPROACH: Always use downsampling endpoint for consistency
 const handleZoomOrPan = useCallback(async (startTime: number, endTime: number) => {
   if (!fileInfo || !selectedChannel) return;
   
-  const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
-  const startSample = Math.floor(startTime * sampleRate);
-  const endSample = Math.floor(endTime * sampleRate);
-  const numSamples = endSample - startSample;
-
-  if (isNaN(startSample) || isNaN(endSample) || startSample < 0 || numSamples <= 0) return;
-
-
+  // Bound the time range to valid limits
+  const boundedStartTime = Math.max(0, startTime);
+  const boundedEndTime = Math.min(fileInfo.duration, Math.max(boundedStartTime + 0.1, endTime));
   
-  // Optimized chunk-based approach with smart downsampling
-  const chartWidth = chartRef.current?.width || 1200;
-  const timeRange = endTime - startTime;
+  console.log(`[DEBUG] handleZoomOrPan: ${boundedStartTime}s to ${boundedEndTime}s for channel ${selectedChannel}`);
   
-  // Calculate optimal sample count based on time range and screen width
-  let actualSamples = numSamples;
-  let maxPoints = Math.max(chartWidth * 2, 2000);
-  
-  // Smart downsampling based on time range - prevents laggy performance
-  if (timeRange <= 60) { // 0-1 minute: High detail
-    actualSamples = Math.min(numSamples, 20000);
-    maxPoints = Math.max(chartWidth * 3, 4000);
-  } else if (timeRange <= 600) { // 1-10 minutes: Good detail
-    actualSamples = Math.min(numSamples, 30000);
-    maxPoints = Math.max(chartWidth * 2.5, 3000);
-  } else if (timeRange <= 3600) { // 10min-1 hour: Medium detail
-    actualSamples = Math.min(numSamples, 20000);
-    maxPoints = Math.max(chartWidth * 2, 2500);
-  } else if (timeRange <= 14400) { // 1-4 hours: Lower detail
-    actualSamples = Math.min(numSamples, 10000);
-    maxPoints = Math.max(chartWidth * 1.5, 2000);
-  } else { // 4+ hours: Overview mode - lightweight for performance
-    actualSamples = Math.min(numSamples, 8000); // Reduced for better performance
-    maxPoints = Math.max(chartWidth, 1500); // Fewer points for speed
+  const channelIndex = fileInfo.channels.indexOf(selectedChannel);
+  if (channelIndex === -1) {
+    console.error(`[ERROR] Channel ${selectedChannel} not found in channels list`);
+    return;
   }
   
-  // Always use chunk-based loading - fastest and most stable
-  debouncedFetchEdfChunk(
+  const sampleRate = fileInfo.sampleRates[channelIndex];
+  if (!sampleRate || sampleRate <= 0) {
+    console.error(`[ERROR] Invalid sample rate for channel ${selectedChannel}: ${sampleRate}`);
+    return;
+  }
+  
+  // SIMPLIFIED: Always use low resolution for smooth performance
+  const timeRange = boundedEndTime - boundedStartTime;
+  const startSample = Math.floor(boundedStartTime * sampleRate);
+  const numSamples = Math.floor(timeRange * sampleRate);
+  
+  // MUCH LOWER resolution for all zoom levels
+  let targetPoints: number;
+  if (timeRange <= 60) { // 0-1 minute: Still keep reasonable detail
+    targetPoints = 800;
+  } else if (timeRange <= 600) { // 1-10 minutes: Lower detail
+    targetPoints = 600; 
+  } else if (timeRange <= 3600) { // 10min-1 hour: Even lower
+    targetPoints = 500;
+  } else { // 1+ hour: Very low for performance
+    targetPoints = 400;
+  }
+  
+  console.log(`[DEBUG] Simplified approach: timeRange=${timeRange}s, startSample=${startSample}, numSamples=${numSamples}, targetPoints=${targetPoints}`);
+  
+  // Always use the downsampling endpoint for consistency
+  debouncedFetchDownsampledData(
     fileInfo.tempFilePath,
     selectedChannel,
     startSample,
-    actualSamples,
-    sampleRate,
-    maxPoints
+    numSamples,
+    targetPoints,
+    boundedStartTime,
+    boundedEndTime
   );
-}, [fileInfo, selectedChannel, debouncedFetchEdfChunk]);
+}, [fileInfo, selectedChannel, debouncedFetchDownsampledData]);
 
 // Add missing useEffect for initial data loading
 useEffect(() => {
   if (!fileInfo || !selectedChannel) return;
 
-  // Load initial view - first 5 minutes for optimal startup performance or entire duration if shorter
-  
+  // Load initial view - first 5 minutes for optimal startup performance
   const initialEndTime = Math.min(300, fileInfo.duration); // First 5 minutes or entire duration if shorter
   handleZoomOrPan(0, initialEndTime);
   setViewport({ start: 0, end: initialEndTime });
@@ -306,59 +329,15 @@ const handleFullNightView = () => {
   // Get the actual first and last sample timestamps
   const start = 0;
   const end = fileInfo.duration;
-  const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
-  const totalSamples = Math.floor(fileInfo.duration * sampleRate);
   
-  console.log(`[DEBUG] Full night view: ${start}s to ${end}s (${totalSamples} samples)`);
+  console.log(`[DEBUG] Full night view: ${start}s to ${end}s`);
   setViewport({ start, end });
 
   if (multiChannelMode) {
     debouncedFetchMultiChunks(start, end);
   } else {
-    // For full night view, use downsampling endpoint for proper distribution
-    const chartWidth = chartRef.current?.width || 1200;
-    const targetPoints = Math.min(chartWidth * 1.5, 2500); // Reasonable point count
-    
-    console.log(`[DEBUG] Full night using downsampling: ${totalSamples} → ${targetPoints} points`);
-    
-    // Use downsampling endpoint to get evenly distributed samples across entire night
-    const fetchFullNight = async () => {
-      try {
-        setIsLoadingChunk(true);
-        
-        const response = await axios.get<{
-          data: number[];
-          stats?: ChannelStats;
-        }>(`http://localhost:5000/api/upload/edf-chunk-downsample`, {
-      params: {
-            filePath: fileInfo.tempFilePath,
-            channel: selectedChannel,
-            start_sample: 0, // Start from first sample
-            num_samples: totalSamples, // Use ALL samples
-            target_points: targetPoints, // Downsample to target points
-      },
-    });
-
-        const chunkData = response.data?.data || [];
-        if (chunkData.length === 0) return;
-
-        // Create timestamps evenly distributed across the entire duration
-        const startTimeObj = new Date(fileInfo.startTime);
-        const labels = chunkData.map((_: number, i: number) => 
-          addSeconds(startTimeObj, (i * fileInfo.duration) / chunkData.length)
-        );
-
-        setChartDataState({ labels, data: chunkData });
-        console.log(`[DEBUG] Full night loaded: ${chunkData.length} points from ${totalSamples} samples`);
-      } catch (err) {
-        console.error("Error fetching full night data:", err);
-        setError("Error loading full night view");
-      } finally {
-        setIsLoadingChunk(false);
-      }
-    };
-    
-    fetchFullNight();
+    // Use the same simplified approach as zoom/pan for consistency
+    handleZoomOrPan(start, end);
   }
 };
 const debouncedFetchMultiChunks = useDebouncedCallback(
@@ -375,20 +354,17 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
     
     // Smart multi-channel downsampling based on time range
     const timeRange = boundedEnd - boundedStart;
-    const chartWidth = chartRef.current?.width || 1200;
     
-    // Calculate optimal target points based on time range (same logic as single channel)
+    // Calculate optimal target points (SIMPLIFIED - same as single channel)
     let targetPoints: number;
-    if (timeRange <= 60) { // 0-1 minute: High detail
-      targetPoints = Math.max(chartWidth * 3, 4000);
-    } else if (timeRange <= 600) { // 1-10 minutes: Good detail
-      targetPoints = Math.max(chartWidth * 2.5, 3000);
-    } else if (timeRange <= 3600) { // 10min-1 hour: Medium detail
-      targetPoints = Math.max(chartWidth * 2, 2500);
-    } else if (timeRange <= 14400) { // 1-4 hours: Lower detail
-      targetPoints = Math.max(chartWidth * 1.5, 2000);
-    } else { // 4+ hours: Overview mode
-      targetPoints = Math.max(chartWidth, 1500);
+    if (timeRange <= 60) { // 0-1 minute: Still keep reasonable detail
+      targetPoints = 800;
+    } else if (timeRange <= 600) { // 1-10 minutes: Lower detail
+      targetPoints = 600; 
+    } else if (timeRange <= 3600) { // 10min-1 hour: Even lower
+      targetPoints = 500;
+    } else { // 1+ hour: Very low for performance
+      targetPoints = 400;
     }
     
     console.log(`[DEBUG] Multi-channel fetch: ${timeRange}s range, ${targetPoints} target points`);
@@ -767,7 +743,7 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
     const centerTimeSeconds = (clickedTimeMs - startTime) / 1000;
     
     // Define zoom window (5 minutes around clicked point for detailed analysis)
-    const zoomWindowSeconds = 300; // 5 minutes - now safe with 15-minute threshold
+    const zoomWindowSeconds = 900; // 5 minutes - now safe with 15-minute threshold
     const halfWindow = zoomWindowSeconds / 2;
     
     const startTime_s = Math.max(0, centerTimeSeconds - halfWindow);
@@ -969,16 +945,16 @@ function handleCustomInterval() {
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
                   <label className="text-sm font-medium text-gray-600">From:</label>
-                  <input 
+                <input 
                     type="time" 
                     value={startTime} 
                     onChange={(e) => setStartTime(e.target.value)}
                     className="border border-gray-300 rounded px-2 py-1 text-sm"
                   />
-                </div>
+              </div>
                 <div className="flex items-center gap-2">
                   <label className="text-sm font-medium text-gray-600">To:</label>
-                  <input 
+                      <input
                     type="time" 
                     value={endTime} 
                     onChange={(e) => setEndTime(e.target.value)}
@@ -991,9 +967,9 @@ function handleCustomInterval() {
                 >
                   Show interval
                 </button>
-              </div>
             </div>
-            
+                </div>
+
             <div className="flex justify-between items-center mb-4">
               <h4 className="text-lg font-medium">EDF Signal Visualization</h4>
               <button
