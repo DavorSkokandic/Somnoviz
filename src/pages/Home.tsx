@@ -1,6 +1,5 @@
-import CSVUpload from "../components/CSVUpload";
-import ColumnSelector from "../components/ColumnSelector";
-import { Upload } from "lucide-react";
+import EDFUpload from "../components/EDFUpload";
+//import ColumnSelector from "../components/ColumnSelector";
 
 export default function Home() {
   return (
@@ -13,9 +12,9 @@ export default function Home() {
             Analiza Polisomnografskih Podataka
           </h1>
           <p className="text-gray-500 mt-2">
-            Učitaj CSV zapis cjelonoćnog polisomnografa i istraži podatke interaktivno.
+            Učitaj EDF zapis cjelonoćnog polisomnografa i istraži podatke interaktivno.
           </p>
-          <CSVUpload />
+          <EDFUpload />
         </div>
       </div>
     </div>
