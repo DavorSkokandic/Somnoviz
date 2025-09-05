@@ -15,13 +15,15 @@ import {
   type TooltipItem, // Dodano za tipovanje tooltip callbacka - type-only import
 } from "chart.js";
 import zoomPlugin from "chartjs-plugin-zoom";
+import annotationPlugin from "chartjs-plugin-annotation";
+import type { AnnotationOptions } from "chartjs-plugin-annotation";
 import "chartjs-adapter-date-fns";
 import { enUS } from 'date-fns/locale';
 import { registerables } from 'chart.js';
 import UploadZone from './UploadZone';
 import StatusDisplay from './StatusDisplay';
 import FileInfoDisplay from './FileInfoDisplay';
-import ChannelSelector from './ChannelSelector';
+import ModeSelector from './ModeSelector';
 import ChannelStatsDisplay from './ChannelStatsDisplay';
 import EDFChart from './EDFChart';
 
@@ -35,6 +37,7 @@ ChartJS.register(
   Tooltip,
   Legend,
   zoomPlugin,
+  annotationPlugin,
   ...registerables
 );
 
@@ -63,6 +66,38 @@ type ChannelStats = {
   max: number;
   stddev: number;
 };
+
+type AHIEvent = {
+  type: 'apnea' | 'hypopnea';
+  start_time: number;
+  end_time: number;
+  duration: number;
+  severity: string;
+  spo2_drop?: number;
+};
+
+type AHIResults = {
+  ahi_analysis: {
+    ahi_score: number;
+    severity: string;
+    severity_color: string;
+    total_events: number;
+    apnea_count: number;
+    hypopnea_count: number;
+    recording_duration_hours: number;
+    total_event_duration_minutes: number;
+    event_percentage: number;
+    avg_apnea_duration: number;
+    avg_hypopnea_duration: number;
+    events_per_hour_breakdown: {
+      apnea_per_hour: number;
+      hypopnea_per_hour: number;
+    };
+  };
+  apnea_events: AHIEvent[];
+  hypopnea_events: AHIEvent[];
+  all_events: AHIEvent[];
+};
 // Formatiranje vremena
 function addSeconds(date: Date, seconds: number): Date {
   const newDate = new Date(date.getTime() + seconds * 1000);
@@ -87,6 +122,14 @@ export default function EDFUpload() {
   const [selectedChannels, setSelectedChannels] = useState<string[]>([]); // Za višekanalni prikaz
   const [channelData, setChannelData] = useState<{ [channel: string]: ChannelData }>({}); // Za višekanalni prikaz
   const [channelStats, setChannelStats] = useState<Record<string, ChannelStats>>({});
+
+  // AHI Analysis Mode States
+  const [ahiMode, setAhiMode] = useState<boolean>(false);
+  const [ahiFlowChannel, setAhiFlowChannel] = useState<string>("");
+  const [ahiSpo2Channel, setAhiSpo2Channel] = useState<string>("");
+  const [ahiResults, setAhiResults] = useState<AHIResults | null>(null);
+  const [ahiAnalyzing, setAhiAnalyzing] = useState<boolean>(false);
+  const [showEventOverlays, setShowEventOverlays] = useState<boolean>(true);
 
   // Stanja za upravljanje prikazanim podacima i zumiranjem
   const [chartDataState, setChartDataState] = useState<{ labels: Date[]; data: number[]; } | null>(null);
@@ -239,6 +282,124 @@ const handleZoomOrPan = useCallback(async (startTime: number, endTime: number) =
   );
 }, [fileInfo, selectedChannel, debouncedFetchDownsampledData]);
 
+// Rolling window navigation for AHI events
+const [currentEventIndex, setCurrentEventIndex] = useState(0);
+
+const navigateToEvent = useCallback((direction: 'next' | 'prev' | 'first') => {
+  if (!ahiResults || !ahiResults.all_events.length) return;
+  
+  const events = ahiResults.all_events.sort((a, b) => a.start_time - b.start_time);
+  let newIndex = currentEventIndex;
+  
+  switch (direction) {
+    case 'next':
+      newIndex = (currentEventIndex + 1) % events.length;
+      break;
+    case 'prev':
+      newIndex = currentEventIndex === 0 ? events.length - 1 : currentEventIndex - 1;
+      break;
+    case 'first':
+      newIndex = 0;
+      break;
+  }
+  
+  setCurrentEventIndex(newIndex);
+  const event = events[newIndex];
+  
+  // Navigate to event with 30-second window around it
+  const windowSize = 30; // 30 seconds around the event
+  const eventCenter = (event.start_time + event.end_time) / 2;
+  const start = Math.max(0, eventCenter - windowSize / 2);
+  const end = Math.min(fileInfo?.duration || 0, eventCenter + windowSize / 2);
+  
+  console.log(`[DEBUG] Navigating to event ${newIndex + 1}/${events.length}: ${event.type} at ${event.start_time}s`);
+  
+  setViewport({ start, end });
+  handleZoomOrPan(start, end);
+}, [ahiResults, currentEventIndex, fileInfo, handleZoomOrPan]);
+
+// AHI Analysis Function
+const handleAHIAnalysis = useCallback(async () => {
+  if (!fileInfo || !ahiFlowChannel || !ahiSpo2Channel) {
+    setError("Please select both Flow and SpO2 channels for AHI analysis");
+    return;
+  }
+
+  setAhiAnalyzing(true);
+  setError(null);
+
+  console.log('[DEBUG] Starting AHI analysis:', {
+    filePath: fileInfo.tempFilePath,
+    flowChannel: ahiFlowChannel,
+    spo2Channel: ahiSpo2Channel
+  });
+
+  try {
+    const response = await axios.post<AHIResults & { success: boolean }>(
+      'http://localhost:5000/api/upload/ahi-analysis',
+      {
+        filePath: fileInfo.tempFilePath,
+        flowChannel: ahiFlowChannel,
+        spo2Channel: ahiSpo2Channel
+      }
+    );
+
+    if (response.data.success) {
+      setAhiResults(response.data);
+      console.log('[DEBUG] AHI analysis completed:', response.data.ahi_analysis);
+    } else {
+      throw new Error('AHI analysis failed');
+    }
+  } catch (err) {
+    console.error('AHI analysis error:', err);
+    if (axios.isAxiosError(err)) {
+      setError(`AHI analysis failed: ${err.response?.data?.error || err.message}`);
+    } else {
+      setError('AHI analysis failed. Please try again.');
+    }
+  } finally {
+    setAhiAnalyzing(false);
+  }
+}, [fileInfo, ahiFlowChannel, ahiSpo2Channel]);
+
+// Mode switching functions
+const handleModeSwitch = useCallback((mode: 'single' | 'multi' | 'ahi') => {
+  // Clear previous states
+  setError(null);
+  setAhiResults(null);
+  
+  switch (mode) {
+    case 'single':
+      setMultiChannelMode(false);
+      setAhiMode(false);
+      break;
+    case 'multi':
+      setMultiChannelMode(true);
+      setAhiMode(false);
+      break;
+    case 'ahi':
+      setMultiChannelMode(false);
+      setAhiMode(true);
+      // Auto-select Flow and SpO2 channels if available
+      if (fileInfo) {
+        const flowChannel = fileInfo.channels.find(ch => 
+          ch.toLowerCase().includes('flow') || 
+          ch.toLowerCase().includes('airflow') ||
+          ch.toLowerCase().includes('nasal')
+        );
+        const spo2Channel = fileInfo.channels.find(ch => 
+          ch.toLowerCase().includes('spo2') || 
+          ch.toLowerCase().includes('sao2') ||
+          ch.toLowerCase().includes('oxygen')
+        );
+        
+        if (flowChannel) setAhiFlowChannel(flowChannel);
+        if (spo2Channel) setAhiSpo2Channel(spo2Channel);
+      }
+      break;
+  }
+}, [fileInfo]);
+
 // Add missing useEffect for initial data loading
 useEffect(() => {
   if (!fileInfo || !selectedChannel) return;
@@ -249,13 +410,7 @@ useEffect(() => {
   setViewport({ start: 0, end: initialEndTime });
 }, [selectedChannel, fileInfo, handleZoomOrPan]);
 
-    // Toggle multi-channel mode
-  const toggleMultiChannelMode = () => {
-    setMultiChannelMode(!multiChannelMode);
-    if (!multiChannelMode) {
-      setSelectedChannels(selectedChannel ? [selectedChannel] : []);
-    }
-  };
+    // OLD: toggleMultiChannelMode removed - now handled by handleModeSwitch
     // Handle channel selection changes
   const handleChannelSelect = (channel: string) => {
     if (selectedChannels.includes(channel)) {
@@ -510,6 +665,47 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
 // Generiraj boje za točke ako je SpO2 kanal
 
 const chartJSData = useMemo(() => {
+  // AHI ANALYSIS MODE - Show Flow and SpO2 with event overlays
+  if (ahiMode && ahiFlowChannel && ahiSpo2Channel) {
+    const flowData = channelData[ahiFlowChannel];
+    const spo2Data = channelData[ahiSpo2Channel];
+    
+    if (!flowData || !spo2Data) {
+      return { labels: [], datasets: [] };
+    }
+
+    // Create dual-axis chart for Flow + SpO2
+    const datasets = [
+      {
+        label: `${ahiFlowChannel} (Flow)`,
+        data: flowData.data,
+        borderColor: "rgb(34, 197, 94)", // Green for flow
+        backgroundColor: "rgba(34, 197, 94, 0.1)",
+        tension: 0.2,
+        pointRadius: 0,
+        borderWidth: 1,
+        yAxisID: 'y', // Primary Y-axis for flow
+      },
+      {
+        label: `${ahiSpo2Channel} (SpO2)`,
+        data: spo2Data.data,
+        borderColor: "rgb(59, 130, 246)", // Blue for SpO2
+        backgroundColor: "rgba(59, 130, 246, 0.1)",
+        tension: 0.2,
+        pointRadius: 1,
+        borderWidth: 2,
+        yAxisID: 'y1', // Secondary Y-axis for SpO2
+        // Color SpO2 points red when < 90%
+        pointBackgroundColor: spo2Data.data.map(value => value < 90 ? "red" : "rgb(59, 130, 246)"),
+      }
+    ];
+
+    return {
+      labels: flowData.labels, // Use flow labels as primary timeline
+      datasets,
+    };
+  }
+
   // SINGLE CHANNEL MODE
   if (!multiChannelMode || selectedChannels.length === 0) {
     if (!chartDataState || !selectedChannel) return { labels: [], datasets: [] };
@@ -586,7 +782,7 @@ const chartJSData = useMemo(() => {
       };
     }),
   };
-}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo, viewport]);
+}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo, viewport, ahiMode, ahiFlowChannel, ahiSpo2Channel]);
 
 
 
@@ -643,17 +839,71 @@ const chartOptions: ChartOptions<'line'> = useMemo(() => {
         },
       },
       y: {
+        type: 'linear',
+        display: true,
+        position: 'left',
         title: {
           display: true,
-          text: 'Amplituda',
+          text: ahiMode ? 'Flow (Airflow)' : 'Amplituda',
         },
       },
+      // Secondary Y-axis for SpO2 in AHI mode
+      ...(ahiMode ? {
+        y1: {
+          type: 'linear',
+          display: true,
+          position: 'right',
+          title: {
+            display: true,
+            text: 'SpO2 (%)',
+          },
+          min: 80,
+          max: 100,
+          grid: {
+            drawOnChartArea: false,
+          },
+        },
+      } : {}),
     },
     plugins: {
       decimation: {
         enabled: true,
         algorithm: 'min-max',
       },
+      // Add annotation plugin for AHI event overlays
+      annotation: ahiMode && ahiResults && showEventOverlays ? {
+        annotations: ahiResults.all_events.reduce((acc: Record<string, AnnotationOptions>, event: AHIEvent, index: number) => {
+          const startTime = new Date(fileInfo.startTime).getTime();
+          const eventStartMs = startTime + (event.start_time * 1000);
+          const eventEndMs = startTime + (event.end_time * 1000);
+          
+          // Event overlay rectangle
+          acc[`event_${index}`] = {
+            type: 'box',
+            xMin: eventStartMs,
+            xMax: eventEndMs,
+            yMin: 0,
+            yMax: 1,
+            backgroundColor: event.type === 'apnea' 
+              ? 'rgba(255, 0, 0, 0.15)' 
+              : 'rgba(255, 165, 0, 0.15)',
+            borderColor: event.type === 'apnea' ? '#ef4444' : '#f97316',
+            borderWidth: 1,
+            label: {
+              display: true,
+              content: `${event.type.toUpperCase()} (${event.duration.toFixed(1)}s)`,
+              position: 'start',
+              backgroundColor: event.type === 'apnea' ? '#ef4444' : '#f97316',
+              color: 'white',
+              font: {
+                size: 10,
+              },
+            },
+          } as AnnotationOptions;
+          
+          return acc;
+        }, {} as Record<string, AnnotationOptions>)
+      } : {},
       tooltip: {
         callbacks: {
           title: (items: TooltipItem<'line'>[]) => {
@@ -710,7 +960,7 @@ const chartOptions: ChartOptions<'line'> = useMemo(() => {
       legend: { display: true },
     },
   };
-}, [fileInfo, viewport, multiChannelMode, debouncedFetchMultiChunks, handleZoomOrPan]);
+}, [fileInfo, viewport, multiChannelMode, debouncedFetchMultiChunks, handleZoomOrPan, ahiMode, ahiResults, showEventOverlays]);
 
 
 
@@ -742,7 +992,7 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
     const clickedTimeMs = clickedTime instanceof Date ? clickedTime.getTime() : new Date(clickedTime).getTime();
     const centerTimeSeconds = (clickedTimeMs - startTime) / 1000;
     
-    // Define zoom window (5 minutes around clicked point for detailed analysis)
+    // Define zoom window (15 minutes around clicked point for detailed analysis)
     const zoomWindowSeconds = 900; // 5 minutes - now safe with 15-minute threshold
     const halfWindow = zoomWindowSeconds / 2;
     
@@ -920,15 +1170,27 @@ function handleCustomInterval() {
           {/* Glavne metrike */}
           <FileInfoDisplay fileInfo={fileInfo} />
           {/* Detaljne informacije i graf */}
-          {/* Channel Selection and Multi-channel toggle */}
-          <ChannelSelector
+          {/* Mode Selection and Channel Configuration */}
+          <ModeSelector
             fileInfo={fileInfo}
             multiChannelMode={multiChannelMode}
+            ahiMode={ahiMode}
             selectedChannel={selectedChannel}
             selectedChannels={selectedChannels}
-            toggleMultiChannelMode={toggleMultiChannelMode}
+            ahiFlowChannel={ahiFlowChannel}
+            ahiSpo2Channel={ahiSpo2Channel}
+            ahiResults={ahiResults}
+            ahiAnalyzing={ahiAnalyzing}
+            showEventOverlays={showEventOverlays}
+            handleModeSwitch={handleModeSwitch}
             setSelectedChannel={setSelectedChannel}
             handleChannelSelect={handleChannelSelect}
+            setAhiFlowChannel={setAhiFlowChannel}
+            setAhiSpo2Channel={setAhiSpo2Channel}
+            handleAHIAnalysis={handleAHIAnalysis}
+            setShowEventOverlays={setShowEventOverlays}
+            navigateToEvent={navigateToEvent}
+            currentEventIndex={currentEventIndex}
           />
           {/* Statistika */}
           <ChannelStatsDisplay channelStats={channelStats} />
