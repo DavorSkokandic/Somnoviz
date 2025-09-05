@@ -7,16 +7,15 @@ import {
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
   Chart, // Dodano Chart za pristup instanci grafa
-  type ChartOptions, // Dodano za tipovanje opcija grafa - type-only import
   type TooltipItem, // Dodano za tipovanje tooltip callbacka - type-only import
 } from "chart.js";
 import zoomPlugin from "chartjs-plugin-zoom";
 import annotationPlugin from "chartjs-plugin-annotation";
-import type { AnnotationOptions } from "chartjs-plugin-annotation";
 import "chartjs-adapter-date-fns";
 import { enUS } from 'date-fns/locale';
 import { registerables } from 'chart.js';
@@ -33,6 +32,7 @@ ChartJS.register(
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
@@ -104,6 +104,48 @@ function addSeconds(date: Date, seconds: number): Date {
   return newDate;
 }
 
+// Create professional event timeline data for PSG-style visualization
+function createEventTimelineData(labels: Date[], events: AHIEvent[], startTimeStr: string) {
+  const startTime = new Date(startTimeStr).getTime();
+  const data: number[] = [];
+  const colors: string[] = [];
+  const borderColors: string[] = [];
+  
+  // Initialize all timeline points as 0 (no event)
+  labels.forEach(() => {
+    data.push(0);
+    colors.push('rgba(0, 0, 0, 0)'); // Transparent
+    borderColors.push('rgba(0, 0, 0, 0)');
+  });
+  
+  // Map events to timeline bars
+  events.forEach((event) => {
+    const eventStartMs = startTime + (event.start_time * 1000);
+    const eventEndMs = startTime + (event.end_time * 1000);
+    
+    // Find corresponding indices in the labels array
+    labels.forEach((labelTime, index) => {
+      const labelMs = labelTime.getTime();
+      
+      // If this label falls within the event time range
+      if (labelMs >= eventStartMs && labelMs <= eventEndMs) {
+        data[index] = 1; // Event height (normalized)
+        
+        // Professional medical color coding
+        if (event.type === 'apnea') {
+          colors[index] = '#ef4444'; // Red for apnea
+          borderColors[index] = '#dc2626';
+        } else {
+          colors[index] = '#f97316'; // Orange for hypopnea
+          borderColors[index] = '#ea580c';
+        }
+      }
+    });
+  });
+  
+  return { data, colors, borderColors };
+}
+
 
 
 
@@ -136,6 +178,7 @@ export default function EDFUpload() {
   // Removed currentZoomStart - now using viewport state for all time tracking
   //const [currentZoomEnd, setCurrentZoomEnd] = useState<number>(0);     // Završni uzorak
   const [isLoadingChunk, setIsLoadingChunk] = useState<boolean>(false);
+  const [loadingChannels, setLoadingChannels] = useState<Set<string>>(new Set());
   const [viewport, setViewport] = useState<{ start: number; end: number } | null>(null);
   const [startTime, setStartTime] = useState<string>("");
   const [endTime, setEndTime] = useState<string>("");
@@ -150,17 +193,30 @@ export default function EDFUpload() {
 
 // NEW: Simplified data fetching using downsampling endpoint
 const fetchDownsampledData = useCallback(async (
-  filePath: string,
-  channel: string,
-  startSample: number,
-  numSamples: number,
+    filePath: string,
+    channel: string,
+    startSample: number,
+    numSamples: number,
   targetPoints: number,
   startTime: number,
   endTime: number
 ) => {
-  if (isLoadingChunk) return;
-  setIsLoadingChunk(true);
-  setError(null);
+    // For AHI mode, allow multiple channels to load simultaneously
+    if (ahiMode && ahiFlowChannel && ahiSpo2Channel) {
+      if (loadingChannels.has(channel)) {
+        console.log(`[DEBUG] Skipping ${channel} - already loading this channel`);
+        return;
+      }
+      setLoadingChannels(prev => new Set(prev).add(channel));
+    } else {
+      // For single/multi channel mode, use the old loading logic
+      if (isLoadingChunk) {
+        console.log(`[DEBUG] Skipping ${channel} - already loading chunk`);
+        return;
+      }
+      setIsLoadingChunk(true);
+    }
+    setError(null);
 
   console.log(`[DEBUG] fetchDownsampledData:`, {
     channel,
@@ -171,8 +227,8 @@ const fetchDownsampledData = useCallback(async (
     endTime
   });
 
-  try {
-    const response = await axios.get<{ data: number[] }>(
+    try {
+      const response = await axios.get<{ data: number[] }>(
       `http://localhost:5000/api/upload/edf-chunk-downsample`,
       {
         params: {
@@ -183,9 +239,9 @@ const fetchDownsampledData = useCallback(async (
           target_points: targetPoints
         }
       }
-    );
+      );
 
-    const chunkData = response.data.data;
+      const chunkData = response.data.data;
     console.log(`[DEBUG] Received ${chunkData.length} downsampled points for ${channel}`);
 
     if (!chunkData || chunkData.length === 0) {
@@ -196,14 +252,25 @@ const fetchDownsampledData = useCallback(async (
 
     // Generate labels based on the requested time range
     const fileStartTime = new Date(fileInfo!.startTime);
-    const labels = chunkData.map((_, i) => {
+      const labels = chunkData.map((_, i) => {
       const timeOffset = startTime + (i * (endTime - startTime)) / chunkData.length;
       return addSeconds(fileStartTime, timeOffset);
-    });
+      });
 
     console.log(`[DEBUG] Generated ${labels.length} labels from ${startTime}s to ${endTime}s`);
 
-    setChartDataState({ labels, data: chunkData });
+    // Update chartDataState for single channel mode
+      setChartDataState({ labels, data: chunkData });
+    
+    // ALSO update channelData for AHI mode (and multi-channel mode)
+    setChannelData(prev => {
+      const newChannelData = {
+        ...prev,
+        [channel]: { labels, data: chunkData }
+      };
+      console.log(`[DEBUG] Updated channelData for ${channel}, now have channels:`, Object.keys(newChannelData));
+      return newChannelData;
+    });
 
   } catch (err: unknown) {
     console.error("Error fetching downsampled data:", err);
@@ -218,10 +285,19 @@ const fetchDownsampledData = useCallback(async (
     } else {
       setError("Error loading data.");
     }
-  } finally {
-    setIsLoadingChunk(false);
-  }
-}, [fileInfo, isLoadingChunk]);
+    } finally {
+      // Clear loading state based on mode
+      if (ahiMode && ahiFlowChannel && ahiSpo2Channel) {
+        setLoadingChannels(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(channel);
+          return newSet;
+        });
+      } else {
+        setIsLoadingChunk(false);
+      }
+    }
+}, [fileInfo, isLoadingChunk, ahiMode, ahiFlowChannel, ahiSpo2Channel, loadingChannels]);
 
 // Debounced version of fetchDownsampledData for smooth interactions
 const debouncedFetchDownsampledData = useDebouncedCallback(
@@ -231,11 +307,91 @@ const debouncedFetchDownsampledData = useDebouncedCallback(
 
 // NEW SIMPLIFIED APPROACH: Always use downsampling endpoint for consistency
 const handleZoomOrPan = useCallback(async (startTime: number, endTime: number) => {
-  if (!fileInfo || !selectedChannel) return;
+  if (!fileInfo) return;
   
   // Bound the time range to valid limits
   const boundedStartTime = Math.max(0, startTime);
   const boundedEndTime = Math.min(fileInfo.duration, Math.max(boundedStartTime + 0.1, endTime));
+  
+  // AHI MODE: Load both Flow and SpO2 channels
+  if (ahiMode && ahiFlowChannel && ahiSpo2Channel) {
+    console.log(`[DEBUG] AHI mode handleZoomOrPan: ${boundedStartTime}s to ${boundedEndTime}s for Flow & SpO2`);
+    
+    // Load Flow channel data
+    const flowIndex = fileInfo.channels.indexOf(ahiFlowChannel);
+    const spo2Index = fileInfo.channels.indexOf(ahiSpo2Channel);
+    
+    if (flowIndex === -1 || spo2Index === -1) {
+      console.error(`[ERROR] AHI channels not found: Flow=${flowIndex}, SpO2=${spo2Index}`);
+      return;
+    }
+    
+    const flowSampleRate = fileInfo.sampleRates[flowIndex];
+    const spo2SampleRate = fileInfo.sampleRates[spo2Index];
+    const timeRange = boundedEndTime - boundedStartTime;
+    
+    // Target points for AHI visualization
+    let targetPoints: number;
+    if (timeRange <= 60) {
+      targetPoints = 800;
+    } else if (timeRange <= 600) {
+      targetPoints = 600;
+    } else if (timeRange <= 3600) {
+      targetPoints = 500;
+    } else {
+      targetPoints = 400;
+    }
+    
+    // Load Flow channel
+    const flowStartSample = Math.floor(boundedStartTime * flowSampleRate);
+    const flowNumSamples = Math.floor(timeRange * flowSampleRate);
+    
+    console.log(`[DEBUG] Loading Flow channel data:`, {
+      channel: ahiFlowChannel,
+      sampleRate: flowSampleRate,
+      startSample: flowStartSample,
+      numSamples: flowNumSamples,
+      targetPoints
+    });
+    
+    // Use debounced loading for both channels with different delays to avoid conflicts
+    debouncedFetchDownsampledData(
+      fileInfo.tempFilePath,
+      ahiFlowChannel,
+      flowStartSample,
+      flowNumSamples,
+      targetPoints,
+      boundedStartTime,
+      boundedEndTime
+    );
+    
+    // Load SpO2 channel
+    const spo2StartSample = Math.floor(boundedStartTime * spo2SampleRate);
+    const spo2NumSamples = Math.floor(timeRange * spo2SampleRate);
+    
+    console.log(`[DEBUG] Loading SpO2 channel data:`, {
+      channel: ahiSpo2Channel,
+      sampleRate: spo2SampleRate,
+      startSample: spo2StartSample,
+      numSamples: spo2NumSamples,
+      targetPoints
+    });
+    
+    debouncedFetchDownsampledData(
+      fileInfo.tempFilePath,
+      ahiSpo2Channel,
+      spo2StartSample,
+      spo2NumSamples,
+      targetPoints,
+      boundedStartTime,
+      boundedEndTime
+    );
+    
+    return;
+  }
+  
+  // SINGLE/MULTI CHANNEL MODE
+  if (!selectedChannel) return;
   
   console.log(`[DEBUG] handleZoomOrPan: ${boundedStartTime}s to ${boundedEndTime}s for channel ${selectedChannel}`);
   
@@ -280,7 +436,7 @@ const handleZoomOrPan = useCallback(async (startTime: number, endTime: number) =
     boundedStartTime,
     boundedEndTime
   );
-}, [fileInfo, selectedChannel, debouncedFetchDownsampledData]);
+}, [fileInfo, selectedChannel, debouncedFetchDownsampledData, ahiMode, ahiFlowChannel, ahiSpo2Channel]);
 
 // Rolling window navigation for AHI events
 const [currentEventIndex, setCurrentEventIndex] = useState(0);
@@ -380,6 +536,7 @@ const handleModeSwitch = useCallback((mode: 'single' | 'multi' | 'ahi') => {
     case 'ahi':
       setMultiChannelMode(false);
       setAhiMode(true);
+      console.log('[DEBUG] Switching to AHI mode');
       // Auto-select Flow and SpO2 channels if available
       if (fileInfo) {
         const flowChannel = fileInfo.channels.find(ch => 
@@ -393,6 +550,8 @@ const handleModeSwitch = useCallback((mode: 'single' | 'multi' | 'ahi') => {
           ch.toLowerCase().includes('oxygen')
         );
         
+        console.log('[DEBUG] Auto-selecting AHI channels:', { flowChannel, spo2Channel });
+        
         if (flowChannel) setAhiFlowChannel(flowChannel);
         if (spo2Channel) setAhiSpo2Channel(spo2Channel);
       }
@@ -402,13 +561,24 @@ const handleModeSwitch = useCallback((mode: 'single' | 'multi' | 'ahi') => {
 
 // Add missing useEffect for initial data loading
 useEffect(() => {
-  if (!fileInfo || !selectedChannel) return;
-
-  // Load initial view - first 5 minutes for optimal startup performance
-  const initialEndTime = Math.min(300, fileInfo.duration); // First 5 minutes or entire duration if shorter
+  if (!fileInfo) return;
+  
+  // In AHI mode, load Flow and SpO2 channels
+  if (ahiMode && ahiFlowChannel && ahiSpo2Channel) {
+    console.log('[DEBUG] Loading initial data for AHI channels:', { ahiFlowChannel, ahiSpo2Channel, ahiMode });
+    const initialEndTime = Math.min(300, fileInfo.duration);
+    console.log('[DEBUG] Calling handleZoomOrPan for AHI mode:', { start: 0, end: initialEndTime });
+    handleZoomOrPan(0, initialEndTime);
+    setViewport({ start: 0, end: initialEndTime });
+    return;
+  }
+  
+  // In other modes, load selected channel
+  if (!selectedChannel) return;
+  const initialEndTime = Math.min(300, fileInfo.duration);
   handleZoomOrPan(0, initialEndTime);
   setViewport({ start: 0, end: initialEndTime });
-}, [selectedChannel, fileInfo, handleZoomOrPan]);
+}, [selectedChannel, fileInfo, handleZoomOrPan, ahiMode, ahiFlowChannel, ahiSpo2Channel]);
 
     // OLD: toggleMultiChannelMode removed - now handled by handleModeSwitch
     // Handle channel selection changes
@@ -670,11 +840,24 @@ const chartJSData = useMemo(() => {
     const flowData = channelData[ahiFlowChannel];
     const spo2Data = channelData[ahiSpo2Channel];
     
+    console.log('[DEBUG] AHI mode chartJSData generation:', {
+      ahiFlowChannel,
+      ahiSpo2Channel,
+      flowDataExists: !!flowData,
+      spo2DataExists: !!spo2Data,
+      flowDataLength: flowData?.data.length,
+      spo2DataLength: spo2Data?.data.length,
+      channelDataKeys: Object.keys(channelData),
+      flowData: flowData ? 'exists' : 'missing',
+      spo2Data: spo2Data ? 'exists' : 'missing'
+    });
+    
     if (!flowData || !spo2Data) {
+      console.log('[DEBUG] Missing channel data for AHI mode, returning empty chart');
       return { labels: [], datasets: [] };
     }
 
-    // Create dual-axis chart for Flow + SpO2
+    // Create professional medical chart: Flow + SpO2 + Event Timeline
     const datasets = [
       {
         label: `${ahiFlowChannel} (Flow)`,
@@ -699,6 +882,47 @@ const chartJSData = useMemo(() => {
         pointBackgroundColor: spo2Data.data.map(value => value < 90 ? "red" : "rgb(59, 130, 246)"),
       }
     ];
+
+    // Add professional event timeline track (if events exist and overlays enabled)
+    if (ahiResults && showEventOverlays && ahiResults.all_events.length > 0 && fileInfo) {
+      const eventTimelineData = createEventTimelineData(flowData.labels, ahiResults.all_events, fileInfo.startTime);
+      
+      // Add event timeline as mixed chart type
+      const eventDataset: {
+        label: string;
+        data: number[];
+        type: string;
+        backgroundColor: string[];
+        borderColor: string[];
+        borderWidth: number;
+        yAxisID: string;
+        barThickness: number;
+        maxBarThickness: number;
+        categoryPercentage: number;
+        barPercentage: number;
+      } = {
+        label: 'Sleep Events',
+        data: eventTimelineData.data,
+        type: 'bar',
+        backgroundColor: eventTimelineData.colors,
+        borderColor: eventTimelineData.borderColors,
+        borderWidth: 1,
+        yAxisID: 'y2',
+        barThickness: 20,
+        maxBarThickness: 20,
+        categoryPercentage: 1.0,
+        barPercentage: 1.0,
+      };
+      
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (datasets as any).push(eventDataset);
+    }
+
+    console.log('[DEBUG] AHI chart data created:', {
+      labelsLength: flowData.labels.length,
+      datasetsCount: datasets.length,
+      datasetLabels: datasets.map(d => d.label)
+    });
 
     return {
       labels: flowData.labels, // Use flow labels as primary timeline
@@ -782,7 +1006,7 @@ const chartJSData = useMemo(() => {
       };
     }),
   };
-}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo, viewport, ahiMode, ahiFlowChannel, ahiSpo2Channel]);
+}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo, viewport, ahiMode, ahiFlowChannel, ahiSpo2Channel, ahiResults, showEventOverlays]);
 
 
 
@@ -793,7 +1017,8 @@ const chartJSData = useMemo(() => {
 
 
   // Chart.js opcije s prilagođenom logikom zooma
-const chartOptions: ChartOptions<'line'> = useMemo(() => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const chartOptions: any = useMemo(() => {
   if (!fileInfo) return {};
 
   const startTime = new Date(fileInfo.startTime).getTime();
@@ -863,6 +1088,21 @@ const chartOptions: ChartOptions<'line'> = useMemo(() => {
             drawOnChartArea: false,
           },
         },
+        // Third Y-axis for professional event timeline
+        y2: {
+          type: 'linear',
+          display: false, // Hide axis labels for cleaner look
+          position: 'left',
+          min: 0,
+          max: 1,
+          grid: {
+            display: false, // No grid lines for timeline
+            drawOnChartArea: false,
+          },
+          ticks: {
+            display: false, // Hide tick marks
+          },
+        },
       } : {}),
     },
     plugins: {
@@ -870,53 +1110,53 @@ const chartOptions: ChartOptions<'line'> = useMemo(() => {
         enabled: true,
         algorithm: 'min-max',
       },
-      // Add annotation plugin for AHI event overlays
-      annotation: ahiMode && ahiResults && showEventOverlays ? {
-        annotations: ahiResults.all_events.reduce((acc: Record<string, AnnotationOptions>, event: AHIEvent, index: number) => {
-          const startTime = new Date(fileInfo.startTime).getTime();
-          const eventStartMs = startTime + (event.start_time * 1000);
-          const eventEndMs = startTime + (event.end_time * 1000);
-          
-          // Event overlay rectangle
-          acc[`event_${index}`] = {
-            type: 'box',
-            xMin: eventStartMs,
-            xMax: eventEndMs,
-            yMin: 0,
-            yMax: 1,
-            backgroundColor: event.type === 'apnea' 
-              ? 'rgba(255, 0, 0, 0.15)' 
-              : 'rgba(255, 165, 0, 0.15)',
-            borderColor: event.type === 'apnea' ? '#ef4444' : '#f97316',
-            borderWidth: 1,
-            label: {
-              display: true,
-              content: `${event.type.toUpperCase()} (${event.duration.toFixed(1)}s)`,
-              position: 'start',
-              backgroundColor: event.type === 'apnea' ? '#ef4444' : '#f97316',
-              color: 'white',
-              font: {
-                size: 10,
-              },
-            },
-          } as AnnotationOptions;
-          
-          return acc;
-        }, {} as Record<string, AnnotationOptions>)
-      } : {},
+      // Removed crowded annotation overlays - using professional event timeline instead
       tooltip: {
         callbacks: {
           title: (items: TooltipItem<'line'>[]) => {
             const time = items[0].label;
             return time;
           },
+          label: (context: TooltipItem<'line'>) => {
+            // Enhanced tooltip for event timeline
+            if (context.dataset.label === 'Sleep Events' && context.parsed.y > 0) {
+              const timeLabel = context.label;
+              const time = new Date(timeLabel);
+              const startTime = new Date(fileInfo.startTime);
+              const secondsFromStart = (time.getTime() - startTime.getTime()) / 1000;
+              
+              // Find the event at this time
+              const event = ahiResults?.all_events.find(e => 
+                secondsFromStart >= e.start_time && secondsFromStart <= e.end_time
+              );
+              
+              if (event) {
+                return [
+                  `${event.type.toUpperCase()} Event`,
+                  `Duration: ${event.duration.toFixed(1)}s`,
+                  event.spo2_drop ? `SpO2 Drop: ${event.spo2_drop.toFixed(1)}%` : ''
+                ].filter(Boolean);
+              }
+            }
+            
+            // Default tooltip for other datasets
+            return `${context.dataset.label}: ${context.parsed.y}`;
+          },
+        },
+        filter: (tooltipItem: TooltipItem<'line'>) => {
+          // Only show tooltip for Sleep Events if there's actually an event
+          if (tooltipItem.dataset.label === 'Sleep Events') {
+            return tooltipItem.parsed.y > 0;
+          }
+          return true;
         },
       },
       zoom: {
         pan: {
           enabled: true,
           mode: 'x',
-          onPanComplete: ({ chart }) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          onPanComplete: ({ chart }: { chart: any }) => {
             const xScale = chart.scales['x'];
             const startTime = new Date(fileInfo.startTime).getTime();
             const start = (xScale.min as number - startTime) / 1000;
@@ -938,7 +1178,8 @@ const chartOptions: ChartOptions<'line'> = useMemo(() => {
           wheel: { enabled: true },
           pinch: { enabled: true },
           mode: 'x',
-          onZoomComplete: ({ chart }) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          onZoomComplete: ({ chart }: { chart: any }) => {
             const xScale = chart.scales['x'];
             const startTime = new Date(fileInfo.startTime).getTime();
             const start = (xScale.min as number - startTime) / 1000;
@@ -957,7 +1198,36 @@ const chartOptions: ChartOptions<'line'> = useMemo(() => {
           },
         },
       },
-      legend: { display: true },
+      legend: { 
+        display: true,
+        position: 'top',
+        labels: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          filter: (legendItem: any) => {
+            // Show more informative legend for AHI mode
+            return legendItem.text !== 'Sleep Events' || ahiMode;
+          },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          generateLabels: (chart: any) => {
+            const defaultLabels = ChartJS.defaults.plugins.legend.labels.generateLabels(chart);
+            
+            // Add custom legend for event timeline in AHI mode
+            if (ahiMode && ahiResults && showEventOverlays) {
+              defaultLabels.push({
+                text: `Events: ${ahiResults.ahi_analysis.apnea_count} Apneas, ${ahiResults.ahi_analysis.hypopnea_count} Hypopneas`,
+                fillStyle: '#ef4444',
+                strokeStyle: '#dc2626',
+                lineWidth: 1,
+                hidden: false,
+                index: defaultLabels.length,
+                datasetIndex: defaultLabels.length,
+              });
+            }
+            
+            return defaultLabels;
+          },
+        },
+      },
     },
   };
 }, [fileInfo, viewport, multiChannelMode, debouncedFetchMultiChunks, handleZoomOrPan, ahiMode, ahiResults, showEventOverlays]);
@@ -1245,9 +1515,9 @@ function handleCustomInterval() {
               chartRef={chartRef}
               chartJSData={chartJSData}
               chartOptions={chartOptions}
-              isLoadingChunk={isLoadingChunk}
+              isLoadingChunk={isLoadingChunk || loadingChannels.size > 0}
               handleChartDoubleClick={handleChartDoubleClick}
-              height={500}
+              height={ahiMode ? 600 : 500} // Increased height for AHI timeline
             />
           </div>
         </div>

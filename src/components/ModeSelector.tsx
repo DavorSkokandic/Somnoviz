@@ -284,15 +284,15 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
                   <div className="text-2xl font-bold text-blue-600">{ahiResults.ahi_analysis.total_events}</div>
                   <div className="text-sm text-gray-600">Total Events</div>
                 </div>
-                <div className="text-center p-3 bg-gray-50 rounded-lg">
-                  <div className="text-2xl font-bold text-gray-600">{ahiResults.ahi_analysis.recording_duration_hours}h</div>
-                  <div className="text-sm text-gray-600">Recording Time</div>
+                <div className="text-center p-3 bg-black-50 rounded-lg">
+                  <div className="text-2xl font-bold text-white-600">{ahiResults.ahi_analysis.recording_duration_hours}h</div>
+                  <div className="text-sm text-white-600">Recording Time</div>
                 </div>
               </div>
 
               {/* Event Overlay Toggle */}
               <div className="flex items-center justify-between mt-4 p-3 bg-gray-50 rounded-lg">
-                <span className="text-sm font-medium text-gray-700">Show Events on Chart</span>
+                <span className="text-sm font-medium text-gray-700">Show Event Timeline Track</span>
                 <label className="flex items-center cursor-pointer">
                   <div className="relative">
                     <input
