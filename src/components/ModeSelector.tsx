@@ -1,4 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { FaChartBar } from 'react-icons/fa';
+import AHIHistogram from './AHIHistogram';
+import { calculateRecommendedBins } from '../utils/histogramUtils';
 
 // AHI Types (matching EDFUpload.tsx)
 type AHIEvent = {
@@ -56,7 +59,7 @@ type ModeSelectorProps = {
   setAhiSpo2Channel: (channel: string) => void;
   handleAHIAnalysis: () => void;
   setShowEventOverlays: (show: boolean) => void;
-  navigateToEvent: (direction: 'next' | 'prev' | 'first') => void;
+  navigateToEvent: (direction: 'next' | 'prev' | 'first' | 'last') => void;
   currentEventIndex: number;
 };
 
@@ -82,10 +85,18 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
   currentEventIndex,
 }) => {
   const currentMode = ahiMode ? 'ahi' : multiChannelMode ? 'multi' : 'single';
+  
+  // Histogram controls state
+  const [showHistogram, setShowHistogram] = useState(false);
+  const [histogramBins, setHistogramBins] = useState(8);
+  const [separateEventTypes, setSeparateEventTypes] = useState(true);
 
   const hasRequiredAHIChannels = () => {
     return ahiFlowChannel && ahiSpo2Channel;
   };
+  
+  // Calculate recommended bins when AHI results change
+  const recommendedBins = ahiResults ? calculateRecommendedBins(ahiResults.all_events.length) : 8;
 
   return (
     <div className="space-y-6">
@@ -335,32 +346,142 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
                       >
                         Next ▶
                       </button>
+                      <button
+                        onClick={() => navigateToEvent('last')}
+                        disabled={currentEventIndex === ahiResults.all_events.length - 1}
+                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-sm"
+                      >
+                        Last ⏭
+                      </button>
                     </div>
                   </div>
                   {/* Current Event Info */}
                   {ahiResults.all_events[currentEventIndex] && (
                     <div className="mt-3 p-3 bg-white rounded border">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${
-                            ahiResults.all_events[currentEventIndex].type === 'apnea' 
-                              ? 'bg-red-100 text-red-800' 
-                              : 'bg-orange-100 text-orange-800'
-                          }`}>
-                            {ahiResults.all_events[currentEventIndex].type.toUpperCase()}
-                          </span>
-                          <span className="ml-2 text-sm text-gray-600">
-                            Duration: {ahiResults.all_events[currentEventIndex].duration.toFixed(1)}s
-                          </span>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3">
+                            <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${
+                              ahiResults.all_events[currentEventIndex].type === 'apnea' 
+                                ? 'bg-red-100 text-red-800' 
+                                : 'bg-orange-100 text-orange-800'
+                            }`}>
+                              {ahiResults.all_events[currentEventIndex].type.toUpperCase()}
+                            </span>
+                            <span className="text-sm text-gray-600">
+                              Duration: {ahiResults.all_events[currentEventIndex].duration.toFixed(1)}s
+                            </span>
+                            <span className="text-sm text-gray-600">
+                              Severity: {ahiResults.all_events[currentEventIndex].severity}
+                            </span>
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            {Math.floor(ahiResults.all_events[currentEventIndex].start_time / 60)}:{
+                              String(Math.floor(ahiResults.all_events[currentEventIndex].start_time % 60)).padStart(2, '0')
+                            } - {Math.floor(ahiResults.all_events[currentEventIndex].end_time / 60)}:{
+                              String(Math.floor(ahiResults.all_events[currentEventIndex].end_time % 60)).padStart(2, '0')
+                            }
+                          </div>
                         </div>
-                        <div className="text-sm text-gray-500">
-                          {Math.floor(ahiResults.all_events[currentEventIndex].start_time / 60)}:{
-                            String(Math.floor(ahiResults.all_events[currentEventIndex].start_time % 60)).padStart(2, '0')
-                          }
-                        </div>
+                        {ahiResults.all_events[currentEventIndex].spo2_drop && (
+                          <div className="text-sm text-gray-600">
+                            SpO2 Drop: {ahiResults.all_events[currentEventIndex].spo2_drop.toFixed(1)}%
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* Event Duration Histogram */}
+          {ahiResults && ahiResults.all_events.length > 0 && (
+            <div className="mt-6">
+              {/* Histogram Toggle and Controls */}
+              <div className="flex items-center justify-between mb-4 p-4 bg-blue-50 rounded-lg">
+                <div className="flex items-center space-x-3">
+                  <FaChartBar className="text-blue-600" />
+                  <span className="text-lg font-semibold text-blue-800">Duration Analysis</span>
+                </div>
+                <button
+                  onClick={() => setShowHistogram(!showHistogram)}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    showHistogram
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-white text-blue-600 border border-blue-600 hover:bg-blue-50'
+                  }`}
+                >
+                  {showHistogram ? 'Hide Histogram' : 'Show Histogram'}
+                </button>
+              </div>
+
+              {showHistogram && (
+                <div className="space-y-4">
+                  {/* Histogram Controls */}
+                  <div className="p-4 bg-gray-50 rounded-lg">
+                    <h5 className="text-sm font-semibold text-gray-700 mb-3">Histogram Settings</h5>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* Bin Count Control */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Number of Bins
+                        </label>
+                        <div className="flex items-center space-x-2">
+                          <input
+                            type="number"
+                            min="3"
+                            max="20"
+                            value={histogramBins}
+                            onChange={(e) => setHistogramBins(Math.max(3, Math.min(20, parseInt(e.target.value) || 8)))}
+                            className="w-20 px-2 py-1 border border-gray-300 rounded text-sm"
+                          />
+                          <button
+                            onClick={() => setHistogramBins(recommendedBins)}
+                            className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                            title={`Recommended: ${recommendedBins} bins`}
+                          >
+                            Auto ({recommendedBins})
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Event Type Separation */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Display Mode
+                        </label>
+                        <select
+                          value={separateEventTypes ? 'separate' : 'combined'}
+                          onChange={(e) => setSeparateEventTypes(e.target.value === 'separate')}
+                          className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                        >
+                          <option value="separate">Separate Apnea/Hypopnea</option>
+                          <option value="combined">Combined Events</option>
+                        </select>
+                      </div>
+
+                      {/* Statistics Info */}
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Quick Stats
+                        </label>
+                        <div className="text-xs text-gray-600">
+                          <div>Total Events: {ahiResults.all_events.length}</div>
+                          <div>Apnea: {ahiResults.ahi_analysis.apnea_count}</div>
+                          <div>Hypopnea: {ahiResults.ahi_analysis.hypopnea_count}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Histogram Chart */}
+                  <AHIHistogram
+                    events={ahiResults.all_events}
+                    binCount={histogramBins}
+                    showSeparateTypes={separateEventTypes}
+                  />
                 </div>
               )}
             </div>

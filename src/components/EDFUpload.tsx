@@ -105,7 +105,7 @@ function addSeconds(date: Date, seconds: number): Date {
 }
 
 // Create professional event timeline data for PSG-style visualization
-function createEventTimelineData(labels: Date[], events: AHIEvent[], startTimeStr: string) {
+function createEventTimelineData(labels: Date[], events: AHIEvent[], startTimeStr: string, currentEventIndex: number = -1) {
   const startTime = new Date(startTimeStr).getTime();
   const data: number[] = [];
   const colors: string[] = [];
@@ -119,7 +119,7 @@ function createEventTimelineData(labels: Date[], events: AHIEvent[], startTimeSt
   });
   
   // Map events to timeline bars
-  events.forEach((event) => {
+  events.forEach((event, eventIndex) => {
     const eventStartMs = startTime + (event.start_time * 1000);
     const eventEndMs = startTime + (event.end_time * 1000);
     
@@ -131,13 +131,16 @@ function createEventTimelineData(labels: Date[], events: AHIEvent[], startTimeSt
       if (labelMs >= eventStartMs && labelMs <= eventEndMs) {
         data[index] = 1; // Event height (normalized)
         
+        // Highlight current event with brighter colors and thicker border
+        const isCurrentEvent = eventIndex === currentEventIndex;
+        
         // Professional medical color coding
         if (event.type === 'apnea') {
-          colors[index] = '#ef4444'; // Red for apnea
-          borderColors[index] = '#dc2626';
+          colors[index] = isCurrentEvent ? '#dc2626' : '#ef4444'; // Brighter red for current event
+          borderColors[index] = isCurrentEvent ? '#991b1b' : '#dc2626';
         } else {
-          colors[index] = '#f97316'; // Orange for hypopnea
-          borderColors[index] = '#ea580c';
+          colors[index] = isCurrentEvent ? '#ea580c' : '#f97316'; // Brighter orange for current event
+          borderColors[index] = isCurrentEvent ? '#c2410c' : '#ea580c';
         }
       }
     });
@@ -214,7 +217,7 @@ const fetchDownsampledData = useCallback(async (
         console.log(`[DEBUG] Skipping ${channel} - already loading chunk`);
         return;
       }
-      setIsLoadingChunk(true);
+    setIsLoadingChunk(true);
     }
     setError(null);
 
@@ -294,8 +297,8 @@ const fetchDownsampledData = useCallback(async (
           return newSet;
         });
       } else {
-        setIsLoadingChunk(false);
-      }
+      setIsLoadingChunk(false);
+    }
     }
 }, [fileInfo, isLoadingChunk, ahiMode, ahiFlowChannel, ahiSpo2Channel, loadingChannels]);
 
@@ -441,10 +444,68 @@ const handleZoomOrPan = useCallback(async (startTime: number, endTime: number) =
 // Rolling window navigation for AHI events
 const [currentEventIndex, setCurrentEventIndex] = useState(0);
 
-const navigateToEvent = useCallback((direction: 'next' | 'prev' | 'first') => {
+// Max/Min finder state
+const [maxMinData, setMaxMinData] = useState<{
+  max: { value: number; time: number; channel: string } | null;
+  min: { value: number; time: number; channel: string } | null;
+}>({ max: null, min: null });
+
+// Function to select an event by clicking on it
+const selectEventByClick = useCallback((clickedTime: number) => {
   if (!ahiResults || !ahiResults.all_events.length) return;
   
   const events = ahiResults.all_events.sort((a, b) => a.start_time - b.start_time);
+  
+  // Find the closest event to the clicked time
+  let closestEventIndex = 0;
+  let minDistance = Infinity;
+  
+  events.forEach((event, index) => {
+    const eventCenter = (event.start_time + event.end_time) / 2;
+    const distance = Math.abs(eventCenter - clickedTime);
+    
+    if (distance < minDistance) {
+      minDistance = distance;
+      closestEventIndex = index;
+    }
+  });
+  
+  console.log(`[DEBUG] Clicked at ${clickedTime}s, selecting event ${closestEventIndex + 1}/${events.length} (${events[closestEventIndex].type})`);
+  
+  setCurrentEventIndex(closestEventIndex);
+  
+  // Navigate to the selected event
+  const event = events[closestEventIndex];
+  const windowSize = 500;
+  const eventCenter = (event.start_time + event.end_time) / 2;
+  
+  let start = eventCenter - windowSize / 2;
+  let end = eventCenter + windowSize / 2;
+  
+  if (start < 0) {
+    start = 0;
+    end = Math.min(fileInfo?.duration || 0, windowSize);
+  } else if (end > (fileInfo?.duration || 0)) {
+    end = fileInfo?.duration || 0;
+    start = Math.max(0, end - windowSize);
+  }
+  
+  setViewport({ start, end });
+  setTimeout(() => {
+    handleZoomOrPan(start, end);
+  }, 100);
+}, [ahiResults, fileInfo, handleZoomOrPan]);
+
+const navigateToEvent = useCallback((direction: 'next' | 'prev' | 'first' | 'last') => {
+  if (!ahiResults || !ahiResults.all_events.length) {
+    console.log('[DEBUG] No AHI results or events available for navigation');
+    return;
+  }
+  
+  const events = ahiResults.all_events.sort((a, b) => a.start_time - b.start_time);
+  console.log(`[DEBUG] Available events (${events.length}):`, events.map((e, i) => `${i}: ${e.type}@${e.start_time}s`));
+  console.log(`[DEBUG] Current event index: ${currentEventIndex}`);
+  
   let newIndex = currentEventIndex;
   
   switch (direction) {
@@ -457,22 +518,182 @@ const navigateToEvent = useCallback((direction: 'next' | 'prev' | 'first') => {
     case 'first':
       newIndex = 0;
       break;
+    case 'last':
+      newIndex = events.length - 1;
+      break;
   }
+  
+  console.log(`[DEBUG] Navigation: ${direction} from index ${currentEventIndex} to ${newIndex}`);
   
   setCurrentEventIndex(newIndex);
   const event = events[newIndex];
   
-  // Navigate to event with 30-second window around it
-  const windowSize = 30; // 30 seconds around the event
+  // Navigate to event with larger window for better visibility
+  const windowSize = 500; // 8+ minutes around the event for better context
   const eventCenter = (event.start_time + event.end_time) / 2;
-  const start = Math.max(0, eventCenter - windowSize / 2);
-  const end = Math.min(fileInfo?.duration || 0, eventCenter + windowSize / 2);
   
-  console.log(`[DEBUG] Navigating to event ${newIndex + 1}/${events.length}: ${event.type} at ${event.start_time}s`);
+  // Ensure the event is perfectly centered in the view
+  let start = eventCenter - windowSize / 2;
+  let end = eventCenter + windowSize / 2;
+  
+  // Adjust if we're near the beginning or end of the recording
+  if (start < 0) {
+    start = 0;
+    end = Math.min(fileInfo?.duration || 0, windowSize);
+  } else if (end > (fileInfo?.duration || 0)) {
+    end = fileInfo?.duration || 0;
+    start = Math.max(0, end - windowSize);
+  }
+  
+  console.log(`[DEBUG] Navigating to event ${newIndex + 1}/${events.length}: ${event.type} at ${event.start_time}s (${event.duration}s duration)`);
+  console.log(`[DEBUG] Event center: ${eventCenter}s, Window: ${start}s to ${end}s (${end - start}s total)`);
+  console.log(`[DEBUG] Event position in window: ${((eventCenter - start) / (end - start) * 100).toFixed(1)}% from left`);
+  console.log(`[DEBUG] Current viewport: ${viewport?.start}s to ${viewport?.end}s`);
+  console.log(`[DEBUG] Event outside current viewport: ${eventCenter < (viewport?.start || 0) || eventCenter > (viewport?.end || 0)}`);
   
   setViewport({ start, end });
+  
+  // For events outside current viewport, ensure data is loaded immediately
+  console.log(`[DEBUG] Calling handleZoomOrPan to load data for new viewport`);
   handleZoomOrPan(start, end);
-}, [ahiResults, currentEventIndex, fileInfo, handleZoomOrPan]);
+}, [ahiResults, currentEventIndex, fileInfo, handleZoomOrPan, viewport]);
+
+// Chart click handler for AHI mode
+const handleChartClick = useCallback((event: React.MouseEvent<HTMLCanvasElement, MouseEvent>) => {
+  if (!ahiMode || !ahiResults || !fileInfo || !chartRef.current) return;
+  
+  const chart = chartRef.current;
+  const rect = chart.canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  
+  // Get the data point at the clicked position
+  const dataX = chart.scales.x.getValueForPixel(x);
+  
+  if (dataX !== null && dataX !== undefined) {
+    // Convert chart time to seconds from start
+    const startTime = new Date(fileInfo.startTime).getTime();
+    const clickedTime = (dataX - startTime) / 1000;
+    
+    console.log(`[DEBUG] Chart clicked at time: ${clickedTime}s`);
+    selectEventByClick(clickedTime);
+  }
+}, [ahiMode, ahiResults, fileInfo, selectEventByClick]);
+
+// Function to find max/min values in current chart data
+const findMaxMinValues = useCallback(() => {
+  if (!fileInfo) return;
+  
+  let maxValue = -Infinity;
+  let minValue = Infinity;
+  let maxTime = 0;
+  let minTime = 0;
+  let maxChannel = '';
+  let minChannel = '';
+  
+  // Check current chart data based on mode
+  if (ahiMode && ahiFlowChannel && ahiSpo2Channel) {
+    // AHI mode - check both Flow and SpO2 channels
+    const flowData = channelData[ahiFlowChannel];
+    const spo2Data = channelData[ahiSpo2Channel];
+    
+    if (flowData && flowData.data.length > 0) {
+      flowData.data.forEach((value, index) => {
+        if (value > maxValue) {
+          maxValue = value;
+          maxTime = (flowData.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
+          maxChannel = ahiFlowChannel;
+        }
+        if (value < minValue) {
+          minValue = value;
+          minTime = (flowData.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
+          minChannel = ahiFlowChannel;
+        }
+      });
+    }
+    
+    if (spo2Data && spo2Data.data.length > 0) {
+      spo2Data.data.forEach((value, index) => {
+        if (value > maxValue) {
+          maxValue = value;
+          maxTime = (spo2Data.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
+          maxChannel = ahiSpo2Channel;
+        }
+        if (value < minValue) {
+          minValue = value;
+          minTime = (spo2Data.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
+          minChannel = ahiSpo2Channel;
+        }
+      });
+    }
+  } else if (multiChannelMode && selectedChannels.length > 0) {
+    // Multi-channel mode
+    selectedChannels.forEach(channel => {
+      const channelDataItem = channelData[channel];
+      if (channelDataItem && channelDataItem.data.length > 0) {
+        channelDataItem.data.forEach((value, index) => {
+          if (value > maxValue) {
+            maxValue = value;
+            maxTime = (channelDataItem.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
+            maxChannel = channel;
+          }
+          if (value < minValue) {
+            minValue = value;
+            minTime = (channelDataItem.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
+            minChannel = channel;
+          }
+        });
+      }
+    });
+  } else if (chartDataState && chartDataState.data.length > 0) {
+    // Single channel mode
+    chartDataState.data.forEach((value, index) => {
+      if (value > maxValue) {
+        maxValue = value;
+        maxTime = (chartDataState.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
+        maxChannel = selectedChannel || 'Current Channel';
+      }
+      if (value < minValue) {
+        minValue = value;
+        minTime = (chartDataState.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
+        minChannel = selectedChannel || 'Current Channel';
+      }
+    });
+  }
+  
+  if (maxValue !== -Infinity && minValue !== Infinity) {
+    setMaxMinData({
+      max: { value: maxValue, time: maxTime, channel: maxChannel },
+      min: { value: minValue, time: minTime, channel: minChannel }
+    });
+    console.log(`[DEBUG] Found max: ${maxValue.toFixed(2)} at ${maxTime.toFixed(1)}s (${maxChannel})`);
+    console.log(`[DEBUG] Found min: ${minValue.toFixed(2)} at ${minTime.toFixed(1)}s (${minChannel})`);
+  }
+}, [fileInfo, ahiMode, ahiFlowChannel, ahiSpo2Channel, channelData, multiChannelMode, selectedChannels, chartDataState, selectedChannel]);
+
+// Function to navigate to max/min value
+const navigateToMaxMin = useCallback((type: 'max' | 'min') => {
+  const target = maxMinData[type];
+  if (!target || !fileInfo) return;
+  
+  const windowSize = 1200; // 20 minutes (20 * 60 seconds)
+  const start = Math.max(0, target.time - windowSize / 2);
+  const end = Math.min(fileInfo.duration, target.time + windowSize / 2);
+  
+  console.log(`[DEBUG] Navigating to ${type}: ${target.value.toFixed(2)} at ${target.time.toFixed(1)}s (${target.channel})`);
+  console.log(`[DEBUG] Window: ${start}s to ${end}s (${end - start}s total)`);
+  
+  setViewport({ start, end });
+  setTimeout(() => {
+    handleZoomOrPan(start, end);
+  }, 100);
+}, [maxMinData, fileInfo, handleZoomOrPan]);
+
+// Auto-find max/min values when chart data changes
+useEffect(() => {
+  if (fileInfo && (chartDataState || Object.keys(channelData).length > 0)) {
+    findMaxMinValues();
+  }
+}, [fileInfo, chartDataState, channelData, findMaxMinValues]);
 
 // AHI Analysis Function
 const handleAHIAnalysis = useCallback(async () => {
@@ -503,6 +724,57 @@ const handleAHIAnalysis = useCallback(async () => {
     if (response.data.success) {
       setAhiResults(response.data);
       console.log('[DEBUG] AHI analysis completed:', response.data.ahi_analysis);
+      
+      // Load full night data for both channels to display complete analysis
+      if (fileInfo && ahiFlowChannel && ahiSpo2Channel) {
+        console.log('[DEBUG] Loading full night data for AHI display');
+        const timeRange = fileInfo.duration;
+        // Use same responsive downsampling as single/multi-channel modes
+        let targetPoints: number;
+        if (timeRange <= 60) {
+          targetPoints = 800;
+        } else if (timeRange <= 600) {
+          targetPoints = 600;
+        } else if (timeRange <= 3600) {
+          targetPoints = 500;
+        } else {
+          targetPoints = 400;
+        }
+        const startTime = 0;
+        const endTime = fileInfo.duration;
+        
+        // Load Flow channel data for full night
+        const flowChannelIndex = fileInfo.channels.indexOf(ahiFlowChannel);
+        const flowSampleRate = fileInfo.sampleRates[flowChannelIndex];
+        const flowStartSample = Math.floor(startTime * flowSampleRate);
+        const flowNumSamples = Math.floor((endTime - startTime) * flowSampleRate);
+        
+        fetchDownsampledData(
+          fileInfo.tempFilePath,
+          ahiFlowChannel,
+          flowStartSample,
+          flowNumSamples,
+          targetPoints,
+          startTime,
+          endTime
+        );
+        
+        // Load SpO2 channel data for full night
+        const spo2ChannelIndex = fileInfo.channels.indexOf(ahiSpo2Channel);
+        const spo2SampleRate = fileInfo.sampleRates[spo2ChannelIndex];
+        const spo2StartSample = Math.floor(startTime * spo2SampleRate);
+        const spo2NumSamples = Math.floor((endTime - startTime) * spo2SampleRate);
+        
+        fetchDownsampledData(
+          fileInfo.tempFilePath,
+          ahiSpo2Channel,
+          spo2StartSample,
+          spo2NumSamples,
+          targetPoints,
+          startTime,
+          endTime
+        );
+      }
     } else {
       throw new Error('AHI analysis failed');
     }
@@ -516,7 +788,7 @@ const handleAHIAnalysis = useCallback(async () => {
   } finally {
     setAhiAnalyzing(false);
   }
-}, [fileInfo, ahiFlowChannel, ahiSpo2Channel]);
+}, [fileInfo, ahiFlowChannel, ahiSpo2Channel, fetchDownsampledData]);
 
 // Mode switching functions
 const handleModeSwitch = useCallback((mode: 'single' | 'multi' | 'ahi') => {
@@ -554,10 +826,61 @@ const handleModeSwitch = useCallback((mode: 'single' | 'multi' | 'ahi') => {
         
         if (flowChannel) setAhiFlowChannel(flowChannel);
         if (spo2Channel) setAhiSpo2Channel(spo2Channel);
+        
+        // Load initial data for both channels
+        if (flowChannel && spo2Channel) {
+          console.log('[DEBUG] Loading initial data for AHI channels');
+          const timeRange = Math.min(3600, fileInfo.duration); // Load first hour or full duration if shorter
+          // Use same responsive downsampling as single/multi-channel modes
+          let targetPoints: number;
+          if (timeRange <= 60) {
+            targetPoints = 800;
+          } else if (timeRange <= 600) {
+            targetPoints = 600;
+          } else if (timeRange <= 3600) {
+            targetPoints = 500;
+          } else {
+            targetPoints = 400;
+          }
+          const startTime = 0;
+          const endTime = timeRange;
+          
+          // Load Flow channel data
+          const flowChannelIndex = fileInfo.channels.indexOf(flowChannel);
+          const flowSampleRate = fileInfo.sampleRates[flowChannelIndex];
+          const flowStartSample = Math.floor(startTime * flowSampleRate);
+          const flowNumSamples = Math.floor((endTime - startTime) * flowSampleRate);
+          
+          fetchDownsampledData(
+            fileInfo.tempFilePath,
+            flowChannel,
+            flowStartSample,
+            flowNumSamples,
+            targetPoints,
+            startTime,
+            endTime
+          );
+          
+          // Load SpO2 channel data
+          const spo2ChannelIndex = fileInfo.channels.indexOf(spo2Channel);
+          const spo2SampleRate = fileInfo.sampleRates[spo2ChannelIndex];
+          const spo2StartSample = Math.floor(startTime * spo2SampleRate);
+          const spo2NumSamples = Math.floor((endTime - startTime) * spo2SampleRate);
+          
+          fetchDownsampledData(
+            fileInfo.tempFilePath,
+            spo2Channel,
+            spo2StartSample,
+            spo2NumSamples,
+            targetPoints,
+            startTime,
+            endTime
+          );
+        }
       }
       break;
   }
-}, [fileInfo]);
+}, [fileInfo, fetchDownsampledData]);
 
 // Add missing useEffect for initial data loading
 useEffect(() => {
@@ -885,7 +1208,7 @@ const chartJSData = useMemo(() => {
 
     // Add professional event timeline track (if events exist and overlays enabled)
     if (ahiResults && showEventOverlays && ahiResults.all_events.length > 0 && fileInfo) {
-      const eventTimelineData = createEventTimelineData(flowData.labels, ahiResults.all_events, fileInfo.startTime);
+      const eventTimelineData = createEventTimelineData(flowData.labels, ahiResults.all_events, fileInfo.startTime, currentEventIndex);
       
       // Add event timeline as mixed chart type
       const eventDataset: {
@@ -1006,14 +1329,7 @@ const chartJSData = useMemo(() => {
       };
     }),
   };
-}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo, viewport, ahiMode, ahiFlowChannel, ahiSpo2Channel, ahiResults, showEventOverlays]);
-
-
-
-
-
-
-  
+}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo, viewport, ahiMode, ahiFlowChannel, ahiSpo2Channel, ahiResults, showEventOverlays, currentEventIndex]);
 
 
   // Chart.js opcije s prilagođenom logikom zooma
@@ -1511,14 +1827,53 @@ function handleCustomInterval() {
                 Pregled cijele snimke
               </button>
             </div>
-            <EDFChart
-              chartRef={chartRef}
-              chartJSData={chartJSData}
-              chartOptions={chartOptions}
-              isLoadingChunk={isLoadingChunk || loadingChannels.size > 0}
-              handleChartDoubleClick={handleChartDoubleClick}
-              height={ahiMode ? 600 : 500} // Increased height for AHI timeline
-            />
+
+              {/* Max/Min Values Display */}
+              {(maxMinData.max || maxMinData.min) && (
+                <div className="mb-4 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
+                  <h5 className="text-sm font-semibold text-blue-800 mb-2">📊 Peak Values (Click to Navigate)</h5>
+                  <div className="flex gap-4">
+                    {maxMinData.max && (
+                      <button
+                        onClick={() => navigateToMaxMin('max')}
+                        className="flex items-center gap-2 px-3 py-2 bg-green-100 hover:bg-green-200 text-green-800 rounded-lg transition-colors duration-200 border border-green-300"
+                      >
+                        <span className="text-lg">📈</span>
+                        <div className="text-left">
+                          <div className="text-xs font-medium">MAX</div>
+                          <div className="text-sm font-bold">{maxMinData.max.value.toFixed(2)}</div>
+                          <div className="text-xs text-green-600">{maxMinData.max.channel}</div>
+                </div>
+                      </button>
+                    )}
+                    {maxMinData.min && (
+                      <button
+                        onClick={() => navigateToMaxMin('min')}
+                        className="flex items-center gap-2 px-3 py-2 bg-red-100 hover:bg-red-200 text-red-800 rounded-lg transition-colors duration-200 border border-red-300"
+                      >
+                        <span className="text-lg">📉</span>
+                        <div className="text-left">
+                          <div className="text-xs font-medium">MIN</div>
+                          <div className="text-sm font-bold">{maxMinData.min.value.toFixed(2)}</div>
+                          <div className="text-xs text-red-600">{maxMinData.min.channel}</div>
+            </div>
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-2 text-xs text-blue-600">
+                    💡 Click on MAX or MIN to view 20 minutes around that value
+                  </div>
+                </div>
+              )}
+              <EDFChart
+                chartRef={chartRef}
+                chartJSData={chartJSData}
+                chartOptions={chartOptions}
+                isLoadingChunk={isLoadingChunk || loadingChannels.size > 0}
+                handleChartDoubleClick={handleChartDoubleClick}
+                handleChartClick={handleChartClick}
+                height={ahiMode ? 600 : 500} // Increased height for AHI timeline
+              />
           </div>
         </div>
       )}
@@ -1527,4 +1882,4 @@ function handleCustomInterval() {
 }
 
 
-// setViewport is now managed by useState above, so this function is not needed and can be removed.
+

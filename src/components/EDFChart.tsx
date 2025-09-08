@@ -10,10 +10,11 @@ type EDFChartProps = {
   chartOptions: ChartOptions<'line'>;
   isLoadingChunk: boolean;
   handleChartDoubleClick: (event: React.MouseEvent<HTMLCanvasElement, MouseEvent>) => void;
+  handleChartClick?: (event: React.MouseEvent<HTMLCanvasElement, MouseEvent>) => void;
   height?: number;
 };
 
-const EDFChart: React.FC<EDFChartProps> = ({ chartRef, chartJSData, chartOptions, isLoadingChunk, handleChartDoubleClick, height = 500 }) => (
+const EDFChart: React.FC<EDFChartProps> = ({ chartRef, chartJSData, chartOptions, isLoadingChunk, handleChartDoubleClick, handleChartClick, height = 500 }) => (
   <div className="relative w-full" style={{ height: `${height}px` }}>
     {isLoadingChunk && (
       <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 z-10 rounded-lg">
@@ -26,6 +27,7 @@ const EDFChart: React.FC<EDFChartProps> = ({ chartRef, chartJSData, chartOptions
       data={chartJSData}
       options={chartOptions}
       onDoubleClick={handleChartDoubleClick}
+      onClick={handleChartClick}
       height={height}
     />
   </div>
