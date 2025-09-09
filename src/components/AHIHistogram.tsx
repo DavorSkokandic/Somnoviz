@@ -104,18 +104,27 @@ const AHIHistogram: React.FC<AHIHistogramProps> = ({ events, binCount, showSepar
     maintainAspectRatio: false,
     plugins: {
       title: {
-        display: true,
-        text: 'Event Duration Distribution',
-        font: {
-          size: 16,
-          weight: 'bold'
-        }
+        display: false, // We'll use our own title in the panel header
       },
       legend: {
         display: true,
         position: 'top' as const,
+        labels: {
+          color: '#e2e8f0', // slate-200 for dark theme
+          font: {
+            size: 12,
+            weight: 'normal'
+          },
+          padding: 20
+        }
       },
       tooltip: {
+        backgroundColor: 'rgba(15, 23, 42, 0.95)', // slate-900 with opacity
+        titleColor: '#f1f5f9', // slate-100
+        bodyColor: '#e2e8f0', // slate-200
+        borderColor: '#475569', // slate-600
+        borderWidth: 1,
+        cornerRadius: 8,
         callbacks: {
           label: (context) => {
             const label = context.dataset.label || '';
@@ -128,29 +137,49 @@ const AHIHistogram: React.FC<AHIHistogramProps> = ({ events, binCount, showSepar
     },
     scales: {
       x: {
+        grid: {
+          color: '#374151', // slate-700 for grid lines
+          drawBorder: false,
+        },
         title: {
           display: true,
           text: 'Event Duration (seconds)',
+          color: '#e2e8f0', // slate-200
           font: {
-            weight: 'bold'
+            weight: 'bold',
+            size: 12
           }
         },
         ticks: {
+          color: '#cbd5e1', // slate-300
           maxRotation: 45,
-          minRotation: 0
+          minRotation: 0,
+          font: {
+            size: 11
+          }
         }
       },
       y: {
+        grid: {
+          color: '#374151', // slate-700 for grid lines
+          drawBorder: false,
+        },
         title: {
           display: true,
           text: 'Number of Events',
+          color: '#e2e8f0', // slate-200
           font: {
-            weight: 'bold'
+            weight: 'bold',
+            size: 12
           }
         },
         beginAtZero: true,
         ticks: {
-          precision: 0
+          color: '#cbd5e1', // slate-300
+          precision: 0,
+          font: {
+            size: 11
+          }
         }
       }
     },
@@ -189,41 +218,36 @@ const AHIHistogram: React.FC<AHIHistogramProps> = ({ events, binCount, showSepar
 
   if (!events || events.length === 0) {
     return (
-      <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
-        <h4 className="text-lg font-semibold mb-4">📊 Event Duration Histogram</h4>
-        <p className="text-gray-500 text-center py-8">No events to display</p>
+      <div className="text-center py-12">
+        <p className="text-slate-400 text-lg">No events to display</p>
+        <p className="text-slate-500 text-sm mt-2">Run AHI analysis to generate event data</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
-      <h4 className="text-lg font-semibold mb-4">📊 Event Duration Histogram</h4>
-      
-      {/* Statistics Summary */}
+    <div className="space-y-4">
+      {/* Statistics Summary - Professional Style */}
       {statistics && (
-        <div className="mb-4 p-4 bg-gray-50 rounded-lg">
-          <h5 className="text-sm font-semibold text-gray-700 mb-2">Statistical Summary</h5>
+        <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
+          <h5 className="text-sm font-semibold text-slate-200 mb-3 uppercase tracking-wide">Statistical Summary</h5>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div>
-              <span className="text-gray-600">Count:</span>
-              <span className="ml-1 font-medium">{statistics.count}</span>
+            <div className="text-center">
+              <div className="text-lg font-bold text-white">{statistics.count}</div>
+              <div className="text-xs text-slate-400 uppercase tracking-wide">Count</div>
             </div>
-            <div>
-              <span className="text-gray-600">Mean:</span>
-              <span className="ml-1 font-medium">{statistics.mean}s</span>
+            <div className="text-center">
+              <div className="text-lg font-bold text-white">{statistics.mean}s</div>
+              <div className="text-xs text-slate-400 uppercase tracking-wide">Mean</div>
             </div>
-            <div>
-              <span className="text-gray-600">Median:</span>
-              <span className="ml-1 font-medium">{statistics.median}s</span>
+            <div className="text-center">
+              <div className="text-lg font-bold text-white">{statistics.median}s</div>
+              <div className="text-xs text-slate-400 uppercase tracking-wide">Median</div>
             </div>
-            <div>
-              <span className="text-gray-600">Range:</span>
-              <span className="ml-1 font-medium">{statistics.min}-{statistics.max}s</span>
+            <div className="text-center">
+              <div className="text-lg font-bold text-white">{statistics.min}-{statistics.max}s</div>
+              <div className="text-xs text-slate-400 uppercase tracking-wide">Range</div>
             </div>
-          </div>
-          <div className="mt-2 text-xs text-blue-600">
-            💡 Recommended bins: {statistics.recommended_bins} (using Sturges' rule)
           </div>
         </div>
       )}

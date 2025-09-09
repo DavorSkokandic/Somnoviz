@@ -1,5 +1,20 @@
 import React, { useState } from 'react';
-import { FaChartBar } from 'react-icons/fa';
+import { 
+  BarChart3, 
+  Activity, 
+  Settings,
+  Stethoscope,
+  Loader2,
+  ChevronFirst,
+  ChevronLast,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  TrendingDown,
+  AlertTriangle,
+  CheckCircle
+} from 'lucide-react';
 import AHIHistogram from './AHIHistogram';
 import { calculateRecommendedBins } from '../utils/histogramUtils';
 
@@ -39,6 +54,7 @@ type AHIResults = {
 type ModeSelectorProps = {
   fileInfo: {
     channels: string[];
+    startTime: string;
   };
   // Current mode states
   multiChannelMode: boolean;
@@ -84,6 +100,27 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
   navigateToEvent,
   currentEventIndex,
 }) => {
+  // Helper function to convert seconds offset to actual EDF file timestamp (HH:MM:SS)
+  const formatEDFTimestamp = (secondsFromStart: number): string => {
+    if (!fileInfo?.startTime) return '00:00:00';
+    
+    try {
+      // Parse the EDF start time and add the offset seconds
+      const startTime = new Date(fileInfo.startTime);
+      const actualTime = new Date(startTime.getTime() + (secondsFromStart * 1000));
+      
+      // Format as HH:MM:SS
+      const hours = actualTime.getHours().toString().padStart(2, '0');
+      const minutes = actualTime.getMinutes().toString().padStart(2, '0');
+      const seconds = actualTime.getSeconds().toString().padStart(2, '0');
+      
+      return `${hours}:${minutes}:${seconds}`;
+    } catch (error) {
+      console.error('[ERROR] Failed to format EDF timestamp:', error);
+      return '00:00:00';
+    }
+  };
+
   const currentMode = ahiMode ? 'ahi' : multiChannelMode ? 'multi' : 'single';
   
   // Histogram controls state
@@ -101,36 +138,39 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
   return (
     <div className="space-y-6">
       {/* Mode Selection Tabs */}
-      <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg">
+      <div className="flex space-x-1 bg-slate-100 p-1 rounded-lg">
         <button
           onClick={() => handleModeSwitch('single')}
-          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center space-x-2 ${
             currentMode === 'single'
-              ? 'bg-white text-blue-600 shadow-sm'
-              : 'text-gray-600 hover:text-gray-800'
+              ? 'bg-white text-blue-700 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          📊 Single Channel
+          <Activity className="w-4 h-4" />
+          <span>Single Channel</span>
         </button>
         <button
           onClick={() => handleModeSwitch('multi')}
-          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center space-x-2 ${
             currentMode === 'multi'
-              ? 'bg-white text-blue-600 shadow-sm'
-              : 'text-gray-600 hover:text-gray-800'
+              ? 'bg-white text-blue-700 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          📈 Multi-Channel
+          <BarChart3 className="w-4 h-4" />
+          <span>Multi Channel</span>
         </button>
         <button
           onClick={() => handleModeSwitch('ahi')}
-          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center space-x-2 ${
             currentMode === 'ahi'
-              ? 'bg-white text-red-600 shadow-sm'
-              : 'text-gray-600 hover:text-gray-800'
+              ? 'bg-white text-blue-700 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          🫁 AHI Analysis
+          <Settings className="w-4 h-4" />
+          <span>AHI Analysis</span>
         </button>
       </div>
 
@@ -159,7 +199,10 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
           <h3 className="text-lg font-medium mb-3">Select Channels (max 5):</h3>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {fileInfo.channels.map((channel, index) => (
-              <label key={`${channel}-${index}`} className="flex items-center space-x-2 p-2 rounded hover:bg-gray-50">
+              <label
+                key={`${channel}-${index}`}
+                className="flex items-center space-x-2 p-2 rounded hover:bg-gray-50"
+              >
                 <input
                   type="checkbox"
                   className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
@@ -171,262 +214,422 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
               </label>
             ))}
           </div>
-          <p className="mt-2 text-sm text-gray-500">
-            {selectedChannels.length}/5 channels selected
-          </p>
+          <p className="mt-2 text-sm text-gray-500">{selectedChannels.length}/5 channels selected</p>
         </div>
       )}
 
       {/* AHI Analysis Mode */}
       {currentMode === 'ahi' && (
-        <div className="space-y-4">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-            <h3 className="text-lg font-medium text-red-800 mb-3">🫁 Sleep Apnea Analysis (AHI)</h3>
-            <p className="text-sm text-red-700 mb-4">
-              Analyze apnea and hypopnea events to calculate the Apnea-Hypopnea Index (AHI).
-              Requires both Flow and SpO2 channels.
-            </p>
-            
-            {/* Channel Selection for AHI */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Flow Channel (Airflow)
-                </label>
-                <select
-                  value={ahiFlowChannel}
-                  onChange={(e) => setAhiFlowChannel(e.target.value)}
-                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                >
-                  <option value="">Select Flow channel...</option>
-                  {fileInfo.channels.map((channel, index) => (
-                    <option key={`flow-${channel}-${index}`} value={channel}>
-                      {channel}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  SpO2 Channel (Oxygen Saturation)
-                </label>
-                <select
-                  value={ahiSpo2Channel}
-                  onChange={(e) => setAhiSpo2Channel(e.target.value)}
-                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                >
-                  <option value="">Select SpO2 channel...</option>
-                  {fileInfo.channels.map((channel, index) => (
-                    <option key={`spo2-${channel}-${index}`} value={channel}>
-                      {channel}
-                    </option>
-                  ))}
-                </select>
+        <div className="space-y-6">
+          {/* Grafana-style AHI Configuration Panel */}
+          <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 bg-gradient-to-br from-red-500 to-red-600 rounded-lg flex items-center justify-center">
+                    <Stethoscope className="w-4 h-4 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Sleep Apnea Analysis (AHI)</h3>
+                    <p className="text-sm text-slate-500">
+                      Apnea-Hypopnea Index calculation and event detection
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                  <span className="text-xs text-red-600 font-medium">Medical Analysis</span>
+                </div>
               </div>
             </div>
+            <div className="p-6">
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <div className="flex items-start space-x-3">
+                  <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-red-700 font-medium mb-1">Clinical Requirements</p>
+                    <p className="text-sm text-red-600">
+                      Requires both Flow (airflow) and SpO2 (oxygen saturation) channels for accurate analysis.
+                    </p>
+                  </div>
+                </div>
+              </div>
 
-            {/* Analysis Button */}
-            <div className="mt-4">
-              <button
-                onClick={handleAHIAnalysis}
-                disabled={!hasRequiredAHIChannels() || ahiAnalyzing}
-                className={`w-full md:w-auto px-6 py-3 rounded-lg font-medium text-white transition-colors ${
-                  hasRequiredAHIChannels() && !ahiAnalyzing
-                    ? 'bg-red-600 hover:bg-red-700 focus:ring-2 focus:ring-red-500'
-                    : 'bg-gray-400 cursor-not-allowed'
-                }`}
-              >
-                {ahiAnalyzing ? (
-                  <span className="flex items-center justify-center">
-                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Analyzing Sleep Events...
-                  </span>
-                ) : (
-                  '🫁 Analyze Sleep Events (AHI)'
-                )}
-              </button>
-              
-              {!hasRequiredAHIChannels() && (
-                <p className="mt-2 text-sm text-red-600">
-                  Please select both Flow and SpO2 channels to start analysis
-                </p>
-              )}
+              {/* Professional Channel Selection */}
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                      Flow Channel (Airflow)
+                    </label>
+                    <select
+                      value={ahiFlowChannel}
+                      onChange={(e) => setAhiFlowChannel(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-colors"
+                    >
+                      <option value="">Select Flow channel...</option>
+                      {fileInfo.channels.map((channel, index) => (
+                        <option key={`flow-${channel}-${index}`} value={channel}>
+                          {channel}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                      SpO2 Channel (Oxygen Saturation)
+                    </label>
+                    <select
+                      value={ahiSpo2Channel}
+                      onChange={(e) => setAhiSpo2Channel(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-colors"
+                    >
+                      <option value="">Select SpO2 channel...</option>
+                      {fileInfo.channels.map((channel, index) => (
+                        <option key={`spo2-${channel}-${index}`} value={channel}>
+                          {channel}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Professional Analysis Button */}
+                <div className="flex items-center justify-between pt-4 border-t border-slate-200">
+                  <div className="flex items-center space-x-2">
+                    {hasRequiredAHIChannels() ? (
+                      <>
+                        <CheckCircle className="w-4 h-4 text-green-500" />
+                        <span className="text-sm text-green-600 font-medium">Ready for Analysis</span>
+                      </>
+                    ) : (
+                      <>
+                        <AlertTriangle className="w-4 h-4 text-amber-500" />
+                        <span className="text-sm text-amber-600 font-medium">Select Both Channels</span>
+                      </>
+                    )}
+                  </div>
+                  <button
+                    onClick={handleAHIAnalysis}
+                    disabled={!hasRequiredAHIChannels() || ahiAnalyzing}
+                    className={`px-6 py-2 rounded-md font-medium text-sm transition-all duration-200 flex items-center space-x-2 ${
+                      hasRequiredAHIChannels() && !ahiAnalyzing
+                        ? 'bg-gradient-to-r from-red-600 to-red-700 text-white hover:from-red-700 hover:to-red-800 shadow-sm'
+                        : 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                    }`}
+                  >
+                    {ahiAnalyzing ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Analyzing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Stethoscope className="w-4 h-4" />
+                        <span>Start Analysis</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* AHI Results Display */}
+          {/* Grafana-style AHI Results Panel */}
           {ahiResults && (
-            <div className="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
-              <h4 className="text-xl font-bold mb-4">📊 AHI Analysis Results</h4>
-              
-              {/* Main AHI Score */}
-              <div className="mb-6 text-center">
-                <div className="inline-flex items-center space-x-4 bg-gray-50 rounded-lg p-4">
-                  <div>
-                    <div className="text-3xl font-bold" style={{ color: ahiResults.ahi_analysis.severity_color }}>
-                      {ahiResults.ahi_analysis.ahi_score}
+            <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
+              <div className="border-b border-slate-200 px-6 py-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-green-600 rounded-lg flex items-center justify-center">
+                      <BarChart3 className="w-4 h-4 text-white" />
                     </div>
-                    <div className="text-sm text-gray-600">AHI Score</div>
-                  </div>
-                  <div>
-                    <div className={`text-lg font-semibold`} style={{ color: ahiResults.ahi_analysis.severity_color }}>
-                      {ahiResults.ahi_analysis.severity}
+                    <div>
+                      <h4 className="text-lg font-semibold text-slate-900">AHI Analysis Results</h4>
+                      <p className="text-sm text-slate-500">Sleep apnea severity assessment and event summary</p>
                     </div>
-                    <div className="text-sm text-gray-600">Severity</div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                    <span className="text-xs text-green-600 font-medium">Analysis Complete</span>
                   </div>
                 </div>
               </div>
-
-              {/* Event Summary */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                <div className="text-center p-3 bg-red-50 rounded-lg">
-                  <div className="text-2xl font-bold text-red-600">{ahiResults.ahi_analysis.apnea_count}</div>
-                  <div className="text-sm text-gray-600">Apnea Events</div>
-                </div>
-                <div className="text-center p-3 bg-orange-50 rounded-lg">
-                  <div className="text-2xl font-bold text-orange-600">{ahiResults.ahi_analysis.hypopnea_count}</div>
-                  <div className="text-sm text-gray-600">Hypopnea Events</div>
-                </div>
-                <div className="text-center p-3 bg-blue-50 rounded-lg">
-                  <div className="text-2xl font-bold text-blue-600">{ahiResults.ahi_analysis.total_events}</div>
-                  <div className="text-sm text-gray-600">Total Events</div>
-                </div>
-                <div className="text-center p-3 bg-black-50 rounded-lg">
-                  <div className="text-2xl font-bold text-white-600">{ahiResults.ahi_analysis.recording_duration_hours}h</div>
-                  <div className="text-sm text-white-600">Recording Time</div>
-                </div>
-              </div>
-
-              {/* Event Overlay Toggle */}
-              <div className="flex items-center justify-between mt-4 p-3 bg-gray-50 rounded-lg">
-                <span className="text-sm font-medium text-gray-700">Show Event Timeline Track</span>
-                <label className="flex items-center cursor-pointer">
-                  <div className="relative">
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={showEventOverlays}
-                      onChange={(e) => setShowEventOverlays(e.target.checked)}
-                    />
-                    <div className={`block w-14 h-8 rounded-full transition ${showEventOverlays ? 'bg-red-500' : 'bg-gray-300'}`}></div>
-                    <div className={`absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${showEventOverlays ? 'transform translate-x-6' : ''}`}></div>
+              <div className="p-6">
+                {/* Professional AHI Score Display */}
+                <div className="mb-6">
+                  <div className="bg-gradient-to-r from-slate-50 to-slate-100 rounded-lg p-6 border border-slate-200">
+                    <div className="flex items-center justify-center space-x-8">
+                      <div className="text-center">
+                        <div
+                          className="text-4xl font-bold mb-2"
+                          style={{ color: ahiResults.ahi_analysis.severity_color }}
+                        >
+                          {ahiResults.ahi_analysis.ahi_score}
+                        </div>
+                        <div className="text-xs font-medium text-slate-600 uppercase tracking-wide">AHI Score</div>
+                        <div className="text-xs text-slate-500">Events/Hour</div>
+                      </div>
+                      <div className="w-px h-16 bg-slate-300"></div>
+                      <div className="text-center">
+                        <div
+                          className="text-xl font-semibold mb-2"
+                          style={{ color: ahiResults.ahi_analysis.severity_color }}
+                        >
+                          {ahiResults.ahi_analysis.severity}
+                        </div>
+                        <div className="text-xs font-medium text-slate-600 uppercase tracking-wide">Severity Level</div>
+                        <div className="text-xs text-slate-500">Clinical Assessment</div>
+                      </div>
+                    </div>
                   </div>
-                </label>
-              </div>
+                </div>
 
-              {/* Event Navigation Controls */}
-              {ahiResults.all_events.length > 0 && (
-                <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-                  <h5 className="text-lg font-semibold text-blue-800 mb-3">🔍 Navigate Events</h5>
+                {/* Professional Event Summary Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="bg-gradient-to-br from-red-50 to-red-100 border border-red-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <AlertTriangle className="w-5 h-5 text-red-600" />
+                      <span className="text-xs font-medium text-red-600 uppercase tracking-wide">Apnea</span>
+                    </div>
+                    <div className="text-2xl font-bold text-red-700">{ahiResults.ahi_analysis.apnea_count}</div>
+                    <div className="text-xs text-red-600">Complete Obstruction</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-orange-50 to-orange-100 border border-orange-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <TrendingDown className="w-5 h-5 text-orange-600" />
+                      <span className="text-xs font-medium text-orange-600 uppercase tracking-wide">Hypopnea</span>
+                    </div>
+                    <div className="text-2xl font-bold text-orange-700">{ahiResults.ahi_analysis.hypopnea_count}</div>
+                    <div className="text-xs text-orange-600">Partial Obstruction</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <BarChart3 className="w-5 h-5 text-blue-600" />
+                      <span className="text-xs font-medium text-blue-600 uppercase tracking-wide">Total</span>
+                    </div>
+                    <div className="text-2xl font-bold text-blue-700">{ahiResults.ahi_analysis.total_events}</div>
+                    <div className="text-xs text-blue-600">All Events</div>
+                  </div>
+                  <div className="bg-gradient-to-br from-slate-50 to-slate-100 border border-slate-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <Activity className="w-5 h-5 text-slate-600" />
+                      <span className="text-xs font-medium text-slate-600 uppercase tracking-wide">Duration</span>
+                    </div>
+                    <div className="text-2xl font-bold text-slate-700">
+                      {ahiResults.ahi_analysis.recording_duration_hours}h
+                    </div>
+                    <div className="text-xs text-slate-600">Recording Time</div>
+                  </div>
+                </div>
+
+                {/* Professional Event Timeline Toggle */}
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
                   <div className="flex items-center justify-between">
-                    <div className="text-sm text-blue-700">
-                      Event {currentEventIndex + 1} of {ahiResults.all_events.length}
+                    <div className="flex items-center space-x-3">
+                      {showEventOverlays ? (
+                        <Eye className="w-4 h-4 text-blue-600" />
+                      ) : (
+                        <EyeOff className="w-4 h-4 text-slate-400" />
+                      )}
+                      <div>
+                        <span className="text-sm font-medium text-slate-900">Event Timeline Track</span>
+                        <p className="text-xs text-slate-500">Display events on the visualization chart</p>
+                      </div>
                     </div>
-                    <div className="flex space-x-2">
+                    <label className="flex items-center cursor-pointer">
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={showEventOverlays}
+                          onChange={(e) => setShowEventOverlays(e.target.checked)}
+                        />
+                        <div
+                          className={`block w-12 h-6 rounded-full transition-colors ${
+                            showEventOverlays ? 'bg-blue-600' : 'bg-slate-300'
+                          }`}
+                        ></div>
+                        <div
+                          className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${
+                            showEventOverlays ? 'transform translate-x-6' : ''
+                          }`}
+                        ></div>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Professional Event Navigation Panel */}
+                {ahiResults.all_events.length > 0 && (
+                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center space-x-3">
+                        <Activity className="w-5 h-5 text-blue-600" />
+                        <div>
+                          <h5 className="text-sm font-semibold text-blue-900">Event Navigation</h5>
+                          <p className="text-xs text-blue-600">Navigate through detected sleep events</p>
+                        </div>
+                      </div>
+                      <div className="text-sm font-medium text-blue-700 bg-white px-3 py-1 rounded-full">
+                        {currentEventIndex + 1} of {ahiResults.all_events.length}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-center space-x-2">
                       <button
                         onClick={() => navigateToEvent('first')}
                         disabled={currentEventIndex === 0}
-                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-sm"
+                        className="p-2 bg-white border border-blue-300 text-blue-600 rounded-md hover:bg-blue-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
+                        title="First Event"
                       >
-                        ⏮ First
+                        <ChevronFirst className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => navigateToEvent('prev')}
-                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+                        disabled={currentEventIndex === 0}
+                        className="p-2 bg-white border border-blue-300 text-blue-600 rounded-md hover:bg-blue-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
+                        title="Previous Event"
                       >
-                        ◀ Prev
+                        <ChevronLeft className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => navigateToEvent('next')}
-                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+                        disabled={currentEventIndex === ahiResults.all_events.length - 1}
+                        className="p-2 bg-white border border-blue-300 text-blue-600 rounded-md hover:bg-blue-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
+                        title="Next Event"
                       >
-                        Next ▶
+                        <ChevronRight className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => navigateToEvent('last')}
                         disabled={currentEventIndex === ahiResults.all_events.length - 1}
-                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-sm"
+                        className="p-2 bg-white border border-blue-300 text-blue-600 rounded-md hover:bg-blue-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
+                        title="Last Event"
                       >
-                        Last ⏭
+                        <ChevronLast className="w-4 h-4" />
                       </button>
                     </div>
-                  </div>
-                  {/* Current Event Info */}
-                  {ahiResults.all_events[currentEventIndex] && (
-                    <div className="mt-3 p-3 bg-white rounded border">
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
+
+                    {/* Professional Current Event Info */}
+                    {ahiResults.all_events[currentEventIndex] && (
+                      <div className="mt-4 p-4 bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded-lg">
+                        <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center space-x-3">
-                            <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${
-                              ahiResults.all_events[currentEventIndex].type === 'apnea' 
-                                ? 'bg-red-100 text-red-800' 
-                                : 'bg-orange-100 text-orange-800'
-                            }`}>
-                              {ahiResults.all_events[currentEventIndex].type.toUpperCase()}
+                            <div
+                              className={`w-3 h-3 rounded-full ${
+                                ahiResults.all_events[currentEventIndex].type === 'apnea'
+                                  ? 'bg-red-500'
+                                  : 'bg-orange-500'
+                              }`}
+                            ></div>
+                            <span
+                              className={`px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide ${
+                                ahiResults.all_events[currentEventIndex].type === 'apnea'
+                                  ? 'bg-red-100 text-red-700 border border-red-200'
+                                  : 'bg-orange-100 text-orange-700 border border-orange-200'
+                              }`}
+                            >
+                              {ahiResults.all_events[currentEventIndex].type}
                             </span>
-                            <span className="text-sm text-gray-600">
-                              Duration: {ahiResults.all_events[currentEventIndex].duration.toFixed(1)}s
-                            </span>
-                            <span className="text-sm text-gray-600">
-                              Severity: {ahiResults.all_events[currentEventIndex].severity}
+                            <span className="text-sm text-slate-600 font-medium">
+                              {ahiResults.all_events[currentEventIndex].severity} Severity
                             </span>
                           </div>
-                          <div className="text-sm text-gray-500">
-                            {Math.floor(ahiResults.all_events[currentEventIndex].start_time / 60)}:{
-                              String(Math.floor(ahiResults.all_events[currentEventIndex].start_time % 60)).padStart(2, '0')
-                            } - {Math.floor(ahiResults.all_events[currentEventIndex].end_time / 60)}:{
-                              String(Math.floor(ahiResults.all_events[currentEventIndex].end_time % 60)).padStart(2, '0')
-                            }
+                          <div className="text-xs text-slate-500 font-mono">
+                            {formatEDFTimestamp(ahiResults.all_events[currentEventIndex].start_time)} -{' '}
+                            {formatEDFTimestamp(ahiResults.all_events[currentEventIndex].end_time)}
                           </div>
                         </div>
-                        {ahiResults.all_events[currentEventIndex].spo2_drop && (
-                          <div className="text-sm text-gray-600">
-                            SpO2 Drop: {ahiResults.all_events[currentEventIndex].spo2_drop.toFixed(1)}%
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-600">Duration:</span>
+                            <span className="font-semibold text-slate-900">
+                              {ahiResults.all_events[currentEventIndex].duration.toFixed(1)}s
+                            </span>
                           </div>
-                        )}
+                          {ahiResults.all_events[currentEventIndex].spo2_drop && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-600">SpO2 Drop:</span>
+                              <span className="font-semibold text-red-600">
+                                {ahiResults.all_events[currentEventIndex].spo2_drop.toFixed(1)}%
+                              </span>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              )}
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
-          
-          {/* Event Duration Histogram */}
+
+          {/* Grafana-style Histogram Panel */}
           {ahiResults && ahiResults.all_events.length > 0 && (
-            <div className="mt-6">
-              {/* Histogram Toggle and Controls */}
-              <div className="flex items-center justify-between mb-4 p-4 bg-blue-50 rounded-lg">
-                <div className="flex items-center space-x-3">
-                  <FaChartBar className="text-blue-600" />
-                  <span className="text-lg font-semibold text-blue-800">Duration Analysis</span>
+            <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
+              <div className="border-b border-slate-200 px-6 py-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center">
+                      <BarChart3 className="w-4 h-4 text-white" />
+                    </div>
+                    <div>
+                      <h4 className="text-lg font-semibold text-slate-900">Event Duration Analysis</h4>
+                      <p className="text-sm text-slate-500">Statistical distribution of apnea and hypopnea event durations</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <div className="flex items-center space-x-2">
+                      {showHistogram ? (
+                        <>
+                          <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
+                          <span className="text-xs text-purple-600 font-medium">Active</span>
+                        </>
+                      ) : (
+                        <>
+                          <div className="w-2 h-2 bg-slate-300 rounded-full"></div>
+                          <span className="text-xs text-slate-500 font-medium">Hidden</span>
+                        </>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setShowHistogram(!showHistogram)}
+                      className={`px-3 py-2 rounded-md font-medium text-sm transition-all duration-200 flex items-center space-x-2 ${
+                        showHistogram
+                          ? 'bg-gradient-to-r from-purple-600 to-purple-700 text-white hover:from-purple-700 hover:to-purple-800 shadow-sm'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-300'
+                      }`}
+                    >
+                      {showHistogram ? (
+                        <>
+                          <EyeOff className="w-4 h-4" />
+                          <span>Hide</span>
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="w-4 h-4" />
+                          <span>Show</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
-                <button
-                  onClick={() => setShowHistogram(!showHistogram)}
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                    showHistogram
-                      ? 'bg-blue-600 text-white hover:bg-blue-700'
-                      : 'bg-white text-blue-600 border border-blue-600 hover:bg-blue-50'
-                  }`}
-                >
-                  {showHistogram ? 'Hide Histogram' : 'Show Histogram'}
-                </button>
               </div>
 
               {showHistogram && (
-                <div className="space-y-4">
-                  {/* Histogram Controls */}
-                  <div className="p-4 bg-gray-50 rounded-lg">
-                    <h5 className="text-sm font-semibold text-gray-700 mb-3">Histogram Settings</h5>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {/* Bin Count Control */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Number of Bins
+                <div className="p-6">
+                  {/* Professional Histogram Controls */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-6">
+                    <div className="flex items-center space-x-2 mb-4">
+                      <Settings className="w-4 h-4 text-slate-600" />
+                      <h5 className="text-sm font-semibold text-slate-900">Analysis Parameters</h5>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      {/* Professional Bin Count Control */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                          Histogram Bins
                         </label>
                         <div className="flex items-center space-x-2">
                           <input
@@ -435,53 +638,79 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
                             max="20"
                             value={histogramBins}
                             onChange={(e) => setHistogramBins(Math.max(3, Math.min(20, parseInt(e.target.value) || 8)))}
-                            className="w-20 px-2 py-1 border border-gray-300 rounded text-sm"
+                            className="w-20 bg-white border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                           />
                           <button
                             onClick={() => setHistogramBins(recommendedBins)}
-                            className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                            className="px-3 py-2 text-xs bg-purple-100 text-purple-700 border border-purple-200 rounded-md hover:bg-purple-200 transition-colors"
                             title={`Recommended: ${recommendedBins} bins`}
                           >
                             Auto ({recommendedBins})
                           </button>
                         </div>
+                        <p className="text-xs text-slate-500">Optimal: {recommendedBins} bins (Sturges' Rule)</p>
                       </div>
 
-                      {/* Event Type Separation */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {/* Professional Display Mode */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
                           Display Mode
                         </label>
                         <select
                           value={separateEventTypes ? 'separate' : 'combined'}
                           onChange={(e) => setSeparateEventTypes(e.target.value === 'separate')}
-                          className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                          className="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
                         >
                           <option value="separate">Separate Apnea/Hypopnea</option>
                           <option value="combined">Combined Events</option>
                         </select>
+                        <p className="text-xs text-slate-500">Visualization grouping method</p>
                       </div>
 
-                      {/* Statistics Info */}
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Quick Stats
+                      {/* Professional Statistics */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                          Event Statistics
                         </label>
-                        <div className="text-xs text-gray-600">
-                          <div>Total Events: {ahiResults.all_events.length}</div>
-                          <div>Apnea: {ahiResults.ahi_analysis.apnea_count}</div>
-                          <div>Hypopnea: {ahiResults.ahi_analysis.hypopnea_count}</div>
+                        <div className="bg-white border border-slate-200 rounded-md p-3 space-y-1">
+                          <div className="flex justify-between text-xs">
+                            <span className="text-slate-600">Total Events:</span>
+                            <span className="font-semibold text-slate-900">{ahiResults.all_events.length}</span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-red-600">Apnea:</span>
+                            <span className="font-semibold text-red-700">{ahiResults.ahi_analysis.apnea_count}</span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-orange-600">Hypopnea:</span>
+                            <span className="font-semibold text-orange-700">{ahiResults.ahi_analysis.hypopnea_count}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* Histogram Chart */}
-                  <AHIHistogram
-                    events={ahiResults.all_events}
-                    binCount={histogramBins}
-                    showSeparateTypes={separateEventTypes}
-                  />
+                  {/* Professional Histogram Chart Container */}
+                  <div className="bg-slate-900 border border-slate-700 rounded-lg overflow-hidden">
+                    <div className="bg-slate-800 px-4 py-2 border-b border-slate-700">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse"></div>
+                          <span className="text-xs text-slate-300 font-medium">Duration Distribution</span>
+                        </div>
+                        <div className="text-xs text-slate-400 font-mono">
+                          {separateEventTypes ? 'Separated' : 'Combined'} • {histogramBins} bins
+                        </div>
+                      </div>
+                    </div>
+                    <div className="p-4 bg-slate-900">
+                      <AHIHistogram
+                        events={ahiResults.all_events}
+                        binCount={histogramBins}
+                        showSeparateTypes={separateEventTypes}
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

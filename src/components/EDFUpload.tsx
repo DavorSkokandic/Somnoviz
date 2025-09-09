@@ -19,6 +19,21 @@ import annotationPlugin from "chartjs-plugin-annotation";
 import "chartjs-adapter-date-fns";
 import { enUS } from 'date-fns/locale';
 import { registerables } from 'chart.js';
+import { 
+  Activity, 
+  Upload, 
+  BarChart3, 
+  TrendingUp, 
+  TrendingDown, 
+  Loader2,
+  Info,
+  Settings,
+  Eye,
+  ZoomIn,
+  Calendar,
+  ChevronDown,
+  ChevronUp
+} from 'lucide-react';
 import UploadZone from './UploadZone';
 import StatusDisplay from './StatusDisplay';
 import FileInfoDisplay from './FileInfoDisplay';
@@ -445,10 +460,16 @@ const handleZoomOrPan = useCallback(async (startTime: number, endTime: number) =
 const [currentEventIndex, setCurrentEventIndex] = useState(0);
 
 // Max/Min finder state
-const [maxMinData, setMaxMinData] = useState<{
-  max: { value: number; time: number; channel: string } | null;
-  min: { value: number; time: number; channel: string } | null;
-}>({ max: null, min: null });
+  const [maxMinData, setMaxMinData] = useState<{
+    max: { value: number; time: number; channel: string } | null;
+    min: { value: number; time: number; channel: string } | null;
+    allChannels?: Record<string, {
+      max: { value: number; time: number };
+      min: { value: number; time: number };
+    }> | null;
+  }>({ max: null, min: null, allChannels: null });
+  const [showMaxMinMarkers, setShowMaxMinMarkers] = useState<boolean>(true);
+  const [showMaxMinSection, setShowMaxMinSection] = useState<boolean>(false);
 
 // Function to select an event by clicking on it
 const selectEventByClick = useCallback((clickedTime: number) => {
@@ -579,96 +600,99 @@ const handleChartClick = useCallback((event: React.MouseEvent<HTMLCanvasElement,
   }
 }, [ahiMode, ahiResults, fileInfo, selectEventByClick]);
 
-// Function to find max/min values in current chart data
-const findMaxMinValues = useCallback(() => {
+// Function to find max/min values from backend (raw data)
+const findMaxMinValues = useCallback(async () => {
   if (!fileInfo) return;
   
-  let maxValue = -Infinity;
-  let minValue = Infinity;
-  let maxTime = 0;
-  let minTime = 0;
-  let maxChannel = '';
-  let minChannel = '';
+  // Skip max/min calculation in AHI mode as it's not needed
+  if (ahiMode) {
+    console.log('[DEBUG] Skipping max/min values calculation in AHI mode');
+    return;
+  }
   
-  // Check current chart data based on mode
-  if (ahiMode && ahiFlowChannel && ahiSpo2Channel) {
-    // AHI mode - check both Flow and SpO2 channels
-    const flowData = channelData[ahiFlowChannel];
-    const spo2Data = channelData[ahiSpo2Channel];
+  try {
+    // Determine which channels to analyze based on current mode
+    let channelsToAnalyze: string[] = [];
     
-    if (flowData && flowData.data.length > 0) {
-      flowData.data.forEach((value, index) => {
-        if (value > maxValue) {
-          maxValue = value;
-          maxTime = (flowData.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
-          maxChannel = ahiFlowChannel;
-        }
-        if (value < minValue) {
-          minValue = value;
-          minTime = (flowData.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
-          minChannel = ahiFlowChannel;
-        }
-      });
+    if (ahiMode && ahiFlowChannel && ahiSpo2Channel) {
+      channelsToAnalyze = [ahiFlowChannel, ahiSpo2Channel];
+    } else if (multiChannelMode && selectedChannels.length > 0) {
+      channelsToAnalyze = selectedChannels;
+    } else if (selectedChannel) {
+      channelsToAnalyze = [selectedChannel];
     }
     
-    if (spo2Data && spo2Data.data.length > 0) {
-      spo2Data.data.forEach((value, index) => {
-        if (value > maxValue) {
-          maxValue = value;
-          maxTime = (spo2Data.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
-          maxChannel = ahiSpo2Channel;
-        }
-        if (value < minValue) {
-          minValue = value;
-          minTime = (spo2Data.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
-          minChannel = ahiSpo2Channel;
-        }
-      });
+    if (channelsToAnalyze.length === 0) {
+      console.log('[DEBUG] No channels to analyze for max/min');
+      return;
     }
-  } else if (multiChannelMode && selectedChannels.length > 0) {
-    // Multi-channel mode
-    selectedChannels.forEach(channel => {
-      const channelDataItem = channelData[channel];
-      if (channelDataItem && channelDataItem.data.length > 0) {
-        channelDataItem.data.forEach((value, index) => {
-          if (value > maxValue) {
-            maxValue = value;
-            maxTime = (channelDataItem.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
-            maxChannel = channel;
+    
+    console.log('[DEBUG] Finding max/min values for channels:', channelsToAnalyze);
+    
+    // Get current viewport for time range
+    const startSec = viewport?.start || 0;
+    const endSec = viewport?.end || fileInfo.duration;
+    
+    const response = await axios.post('http://localhost:5000/api/upload/max-min-values', {
+      filePath: fileInfo.tempFilePath,
+      channels: channelsToAnalyze,
+      startSec: startSec,
+      endSec: endSec
+    });
+    
+    if (response.data.success) {
+      const backendData = response.data.data;
+      console.log('[DEBUG] Backend max/min results:', backendData);
+      
+      // Store all channel max/min data for multi-channel mode
+      if (multiChannelMode) {
+        // For multi-channel mode, store all channel data
+        setMaxMinData({
+          max: null, // Will be set per channel
+          min: null, // Will be set per channel
+          allChannels: backendData // Store all channel data
+        });
+      } else {
+        // For single channel and AHI mode, find global max and min
+        let globalMax = { value: -Infinity, time: 0, channel: '' };
+        let globalMin = { value: Infinity, time: 0, channel: '' };
+        
+        Object.entries(backendData).forEach(([channel, data]) => {
+          const channelData = data as {
+            max: { value: number; time: number };
+            min: { value: number; time: number };
+          };
+          if (channelData.max && channelData.max.value > globalMax.value) {
+            globalMax = {
+              value: channelData.max.value,
+              time: channelData.max.time,
+              channel: channel
+            };
           }
-          if (value < minValue) {
-            minValue = value;
-            minTime = (channelDataItem.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
-            minChannel = channel;
+          if (channelData.min && channelData.min.value < globalMin.value) {
+            globalMin = {
+              value: channelData.min.value,
+              time: channelData.min.time,
+              channel: channel
+            };
           }
         });
+        
+        if (globalMax.value !== -Infinity && globalMin.value !== Infinity) {
+          setMaxMinData({
+            max: globalMax,
+            min: globalMin,
+            allChannels: null
+          });
+          console.log(`[DEBUG] Backend found max: ${globalMax.value.toFixed(2)} at ${globalMax.time.toFixed(1)}s (${globalMax.channel})`);
+          console.log(`[DEBUG] Backend found min: ${globalMin.value.toFixed(2)} at ${globalMin.time.toFixed(1)}s (${globalMin.channel})`);
+        }
       }
-    });
-  } else if (chartDataState && chartDataState.data.length > 0) {
-    // Single channel mode
-    chartDataState.data.forEach((value, index) => {
-      if (value > maxValue) {
-        maxValue = value;
-        maxTime = (chartDataState.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
-        maxChannel = selectedChannel || 'Current Channel';
-      }
-      if (value < minValue) {
-        minValue = value;
-        minTime = (chartDataState.labels[index].getTime() - new Date(fileInfo.startTime).getTime()) / 1000;
-        minChannel = selectedChannel || 'Current Channel';
-      }
-    });
+    }
+  } catch (error) {
+    console.error('[ERROR] Failed to get max/min values from backend:', error);
   }
-  
-  if (maxValue !== -Infinity && minValue !== Infinity) {
-    setMaxMinData({
-      max: { value: maxValue, time: maxTime, channel: maxChannel },
-      min: { value: minValue, time: minTime, channel: minChannel }
-    });
-    console.log(`[DEBUG] Found max: ${maxValue.toFixed(2)} at ${maxTime.toFixed(1)}s (${maxChannel})`);
-    console.log(`[DEBUG] Found min: ${minValue.toFixed(2)} at ${minTime.toFixed(1)}s (${minChannel})`);
-  }
-}, [fileInfo, ahiMode, ahiFlowChannel, ahiSpo2Channel, channelData, multiChannelMode, selectedChannels, chartDataState, selectedChannel]);
+}, [fileInfo, ahiMode, ahiFlowChannel, ahiSpo2Channel, multiChannelMode, selectedChannels, selectedChannel, viewport]);
 
 // Function to navigate to max/min value
 const navigateToMaxMin = useCallback((type: 'max' | 'min') => {
@@ -687,6 +711,49 @@ const navigateToMaxMin = useCallback((type: 'max' | 'min') => {
     handleZoomOrPan(start, end);
   }, 100);
 }, [maxMinData, fileInfo, handleZoomOrPan]);
+
+// Helper function to convert seconds offset to actual EDF file timestamp (HH:MM:SS)
+const formatEDFTimestamp = useCallback((secondsFromStart: number) => {
+  if (!fileInfo?.startTime) return '00:00:00';
+  
+  try {
+    // Parse the EDF start time and add the offset seconds
+    const startTime = new Date(fileInfo.startTime);
+    const actualTime = new Date(startTime.getTime() + (secondsFromStart * 1000));
+    
+    // Format as HH:MM:SS
+    const hours = actualTime.getHours().toString().padStart(2, '0');
+    const minutes = actualTime.getMinutes().toString().padStart(2, '0');
+    const seconds = actualTime.getSeconds().toString().padStart(2, '0');
+    
+    return `${hours}:${minutes}:${seconds}`;
+  } catch (error) {
+    console.error('[ERROR] Failed to format EDF timestamp:', error);
+    return '00:00:00';
+  }
+}, [fileInfo?.startTime]);
+
+// Function to navigate to specific channel max/min value
+const navigateToChannelMaxMin = useCallback((channel: string, type: 'max' | 'min') => {
+  if (!maxMinData.allChannels || !fileInfo) return;
+  
+  const channelData = maxMinData.allChannels[channel];
+  if (!channelData || !channelData[type]) return;
+
+  const target = channelData[type];
+  
+  const windowSize = 1200; // 20 minutes (20 * 60 seconds)
+  const start = Math.max(0, target.time - windowSize / 2);
+  const end = Math.min(fileInfo.duration, target.time + windowSize / 2);
+
+  console.log(`[DEBUG] Navigating to ${channel} ${type}: ${target.value.toFixed(2)} at ${target.time.toFixed(1)}s`);
+  console.log(`[DEBUG] Window: ${start}s to ${end}s (${end - start}s total)`);
+
+  setViewport({ start, end });
+  setTimeout(() => {
+    handleZoomOrPan(start, end);
+  }, 100);
+}, [maxMinData.allChannels, fileInfo, handleZoomOrPan]);
 
 // Auto-find max/min values when chart data changes
 useEffect(() => {
@@ -1241,6 +1308,8 @@ const chartJSData = useMemo(() => {
       (datasets as any).push(eventDataset);
     }
 
+    // Max/min data points are not needed in AHI mode - removed for cleaner medical visualization
+
     console.log('[DEBUG] AHI chart data created:', {
       labelsLength: flowData.labels.length,
       datasetsCount: datasets.length,
@@ -1262,18 +1331,63 @@ const chartJSData = useMemo(() => {
       ? chartDataState.data.map(value => value < 90 ? "red" : "blue")
       : [];
 
-    return {
-      labels: chartDataState.labels,
-      datasets: [{
+    const datasets = [{
         label: selectedChannel,
         data: chartDataState.data,
         borderColor: "rgb(59, 130, 246)",
         backgroundColor: "rgba(59, 130, 246, 0.2)",
         tension: 0.4,
-        pointRadius: isSpo2 ? 1 : 0,
+      pointRadius: isSpo2 ? 1 : 0,
         pointBackgroundColor: isSpo2 ? pointColors : undefined,
         borderWidth: 1,
-      }],
+    }];
+
+    // Add max/min data points if enabled and data exists
+    if (showMaxMinMarkers && maxMinData.max && maxMinData.min && fileInfo) {
+      const startTime = new Date(fileInfo.startTime);
+      
+      // Add MAX data point
+      if (viewport && maxMinData.max.time >= viewport.start && maxMinData.max.time <= viewport.end) {
+        const maxTime = addSeconds(startTime, maxMinData.max.time);
+        const maxDataset = {
+          label: `MAX: ${maxMinData.max.value.toFixed(2)} (${maxMinData.max.channel})`,
+          data: [{ x: maxTime, y: maxMinData.max.value }],
+          borderColor: '#10B981',
+          backgroundColor: '#10B981',
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          pointBorderWidth: 1,
+          pointBorderColor: '#ffffff',
+          pointBackgroundColor: '#10B981',
+          showLine: false,
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (datasets as any).push(maxDataset);
+      }
+      
+      // Add MIN data point
+      if (viewport && maxMinData.min.time >= viewport.start && maxMinData.min.time <= viewport.end) {
+        const minTime = addSeconds(startTime, maxMinData.min.time);
+        const minDataset = {
+          label: `MIN: ${maxMinData.min.value.toFixed(2)} (${maxMinData.min.channel})`,
+          data: [{ x: minTime, y: maxMinData.min.value }],
+          borderColor: '#EF4444',
+          backgroundColor: '#EF4444',
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          pointBorderWidth: 1,
+          pointBorderColor: '#ffffff',
+          pointBackgroundColor: '#EF4444',
+          showLine: false,
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (datasets as any).push(minDataset);
+      }
+    }
+
+    return {
+      labels: chartDataState.labels,
+      datasets,
     };
   }
 
@@ -1306,9 +1420,7 @@ const chartJSData = useMemo(() => {
   }
   const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
 
-  return {
-    labels: sharedLabels, //  SVI KANALE ISTI LABELS!
-    datasets: selectedChannels.map((channel, index) => {
+  const datasets = selectedChannels.map((channel, index) => {
       const data = channelData[channel]?.data || [];
       const isSpo2 = channel.toLowerCase().includes("spo2");
 
@@ -1322,14 +1434,71 @@ const chartJSData = useMemo(() => {
         borderColor: colors[index % colors.length],
         backgroundColor: `${colors[index % colors.length]}33`,
         tension: 0.4,
-        pointRadius: isSpo2 ? 1 : 0,
+      pointRadius: isSpo2 ? 1 : 0,
         pointBackgroundColor: isSpo2 ? pointColors : undefined,
         borderWidth: 1,
         yAxisID: `y-${index}`, // ako koristiš više y-osi
       };
-    }),
+  });
+
+  // Add max/min data points for each channel if enabled and data exists
+  if (showMaxMinMarkers && maxMinData.allChannels && fileInfo) {
+    const startTime = new Date(fileInfo.startTime);
+    
+    // Add max/min points for each channel
+    Object.entries(maxMinData.allChannels).forEach(([channel, data]) => {
+      const channelData = data as {
+        max: { value: number; time: number };
+        min: { value: number; time: number };
+      };
+      
+      // Add MAX data point for this channel
+      if (viewport && channelData.max && channelData.max.time >= viewport.start && channelData.max.time <= viewport.end) {
+        const maxTime = addSeconds(startTime, channelData.max.time);
+        const maxDataset = {
+          label: `MAX: ${channelData.max.value.toFixed(2)} (${channel})`,
+          data: [{ x: maxTime, y: channelData.max.value }],
+          borderColor: '#10B981',
+          backgroundColor: '#10B981',
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          pointBorderWidth: 1,
+          pointBorderColor: '#ffffff',
+          pointBackgroundColor: '#10B981',
+          showLine: false,
+          yAxisID: `y-${selectedChannels.indexOf(channel)}`,
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (datasets as any).push(maxDataset);
+      }
+      
+      // Add MIN data point for this channel
+      if (viewport && channelData.min && channelData.min.time >= viewport.start && channelData.min.time <= viewport.end) {
+        const minTime = addSeconds(startTime, channelData.min.time);
+        const minDataset = {
+          label: `MIN: ${channelData.min.value.toFixed(2)} (${channel})`,
+          data: [{ x: minTime, y: channelData.min.value }],
+          borderColor: '#EF4444',
+          backgroundColor: '#EF4444',
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          pointBorderWidth: 1,
+          pointBorderColor: '#ffffff',
+          pointBackgroundColor: '#EF4444',
+          showLine: false,
+          yAxisID: `y-${selectedChannels.indexOf(channel)}`,
+        };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (datasets as any).push(minDataset);
+      }
+    });
+  }
+
+  return {
+    labels: sharedLabels, //  SVI KANALE ISTI LABELS!
+    datasets,
   };
-}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo, viewport, ahiMode, ahiFlowChannel, ahiSpo2Channel, ahiResults, showEventOverlays, currentEventIndex]);
+}, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo, viewport, ahiMode, ahiFlowChannel, ahiSpo2Channel, ahiResults, showEventOverlays, currentEventIndex, showMaxMinMarkers, maxMinData]);
 
 
   // Chart.js opcije s prilagođenom logikom zooma
@@ -1426,6 +1595,7 @@ const chartOptions: any = useMemo(() => {
         enabled: true,
         algorithm: 'min-max',
       },
+      // Removed vertical annotation lines - using data points with labels instead
       // Removed crowded annotation overlays - using professional event timeline instead
       tooltip: {
         callbacks: {
@@ -1449,6 +1619,7 @@ const chartOptions: any = useMemo(() => {
               if (event) {
                 return [
                   `${event.type.toUpperCase()} Event`,
+                  `Time: ${formatEDFTimestamp(event.start_time)} - ${formatEDFTimestamp(event.end_time)}`,
                   `Duration: ${event.duration.toFixed(1)}s`,
                   event.spo2_drop ? `SpO2 Drop: ${event.spo2_drop.toFixed(1)}%` : ''
                 ].filter(Boolean);
@@ -1546,7 +1717,7 @@ const chartOptions: any = useMemo(() => {
       },
     },
   };
-}, [fileInfo, viewport, multiChannelMode, debouncedFetchMultiChunks, handleZoomOrPan, ahiMode, ahiResults, showEventOverlays]);
+}, [fileInfo, viewport, multiChannelMode, debouncedFetchMultiChunks, handleZoomOrPan, ahiMode, ahiResults, showEventOverlays, formatEDFTimestamp]);
 
 
 
@@ -1559,7 +1730,7 @@ const chartOptions: any = useMemo(() => {
 
   // Dodaj na vrh komponente
 const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasElement, MouseEvent>) => {
-  if (!chartRef.current || !fileInfo || !selectedChannel) return;
+  if (!chartRef.current || !fileInfo) return;
   const chart = chartRef.current;
 
     // Get the clicked point using Chart.js API
@@ -1578,19 +1749,19 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
     const clickedTimeMs = clickedTime instanceof Date ? clickedTime.getTime() : new Date(clickedTime).getTime();
     const centerTimeSeconds = (clickedTimeMs - startTime) / 1000;
     
-    // Define zoom window (15 minutes around clicked point for detailed analysis)
-    const zoomWindowSeconds = 900; // 5 minutes - now safe with 15-minute threshold
-    const halfWindow = zoomWindowSeconds / 2;
+    // Define zoom window (15 minutes total around clicked point for detailed analysis)
+    const zoomWindowSeconds = 15 * 60; // 15 minutes = 900 seconds
+    const halfWindow = zoomWindowSeconds / 2; // 7.5 minutes on each side
     
     const startTime_s = Math.max(0, centerTimeSeconds - halfWindow);
     const endTime_s = Math.min(fileInfo.duration, centerTimeSeconds + halfWindow);
     
-    console.log(`[DEBUG] Double-click zoom: center=${centerTimeSeconds}s, window=${startTime_s}s to ${endTime_s}s`);
+    console.log(`[DEBUG] Double-click zoom: center=${centerTimeSeconds.toFixed(1)}s, window=${startTime_s.toFixed(1)}s to ${endTime_s.toFixed(1)}s (${(endTime_s - startTime_s).toFixed(1)}s total)`);
     
     // Update viewport and load data using the consistent handleZoomOrPan function
     setViewport({ start: startTime_s, end: endTime_s });
     handleZoomOrPan(startTime_s, endTime_s);
-  }, [chartRef, fileInfo, selectedChannel, chartDataState, handleZoomOrPan]);
+  }, [chartRef, fileInfo, chartDataState, handleZoomOrPan]);
   
 
   // Restore file upload handlers
@@ -1740,146 +1911,427 @@ function handleCustomInterval() {
 
 
   return (
-    <div className="w-full max-w-4xl mx-auto p-4">
-      {/* Upload zona */}
-      <UploadZone
-        fileInputRef={fileInputRef as React.RefObject<HTMLInputElement>}
-        handleFileUpload={handleFileUpload}
-        handleClick={handleClick}
-        handleDrop={handleDrop}
-      />
-      {/* Status */}
-      <StatusDisplay loading={loading} isLoadingChunk={isLoadingChunk} error={error} />
-      {/* Prikaz informacija o EDF fajlu */}
-      {fileInfo && (
-        <div className="mt-8 space-y-8">
-          {/* Glavne metrike */}
-          <FileInfoDisplay fileInfo={fileInfo} />
-          {/* Detaljne informacije i graf */}
-          {/* Mode Selection and Channel Configuration */}
-          <ModeSelector
-            fileInfo={fileInfo}
-            multiChannelMode={multiChannelMode}
-            ahiMode={ahiMode}
-            selectedChannel={selectedChannel}
-            selectedChannels={selectedChannels}
-            ahiFlowChannel={ahiFlowChannel}
-            ahiSpo2Channel={ahiSpo2Channel}
-            ahiResults={ahiResults}
-            ahiAnalyzing={ahiAnalyzing}
-            showEventOverlays={showEventOverlays}
-            handleModeSwitch={handleModeSwitch}
-            setSelectedChannel={setSelectedChannel}
-            handleChannelSelect={handleChannelSelect}
-            setAhiFlowChannel={setAhiFlowChannel}
-            setAhiSpo2Channel={setAhiSpo2Channel}
-            handleAHIAnalysis={handleAHIAnalysis}
-            setShowEventOverlays={setShowEventOverlays}
-            navigateToEvent={navigateToEvent}
-            currentEventIndex={currentEventIndex}
-          />
-          {/* Statistika */}
-          <ChannelStatsDisplay channelStats={channelStats} />
-          {/* Graf na cijeloj širini */}
-          <div className="bg-white rounded-xl shadow p-4">
-            {/* Custom Time Interval Section */}
-            <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-              <h4 className="text-sm font-medium text-gray-700 mb-2">Custom Time Interval</h4>
-              {fileInfo && (
-                <div className="text-xs text-gray-600 mb-2">
-                  Recording time: {new Date(fileInfo.startTime).toLocaleTimeString('en-GB', { hour12: false })} - {new Date(new Date(fileInfo.startTime).getTime() + fileInfo.duration * 1000).toLocaleTimeString('en-GB', { hour12: false })}
-                </div>
-              )}
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium text-gray-600">From:</label>
-                <input 
-                    type="time" 
-                    value={startTime} 
-                    onChange={(e) => setStartTime(e.target.value)}
-                    className="border border-gray-300 rounded px-2 py-1 text-sm"
-                  />
+    <div className="p-6 space-y-6">
+      {/* Grafana-inspired Upload Panel */}
+      <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
+        <div className="border-b border-slate-200 px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center">
+                <Upload className="w-4 h-4 text-white" />
               </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-sm font-medium text-gray-600">To:</label>
-                      <input
-                    type="time" 
-                    value={endTime} 
-                    onChange={(e) => setEndTime(e.target.value)}
-                    className="border border-gray-300 rounded px-2 py-1 text-sm"
-                  />
-                </div>
-                <button 
-                  onClick={handleCustomInterval} 
-                  className="bg-blue-600 text-white px-4 py-1 rounded text-sm hover:bg-blue-700 transition duration-200"
-                >
-                  Show interval
-                </button>
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Data Source</h2>
+                <p className="text-sm text-slate-500">Upload EDF polysomnographic recordings</p>
+              </div>
             </div>
-                </div>
-
-            <div className="flex justify-between items-center mb-4">
-              <h4 className="text-lg font-medium">EDF Signal Visualization</h4>
-              <button
-                onClick={handleFullNightView}
-                className="bg-black text-white px-6 py-2 rounded-xl shadow-md hover:from-blue-700 hover:via-indigo-800 hover:to-blue-950 hover:scale-105 transition duration-200 font-semibold tracking-wide flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
-              >
-                Pregled cijele snimke
-              </button>
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 bg-slate-300 rounded-full"></div>
+              <span className="text-xs text-slate-500 font-medium">Ready</span>
             </div>
-
-              {/* Max/Min Values Display */}
-              {(maxMinData.max || maxMinData.min) && (
-                <div className="mb-4 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200">
-                  <h5 className="text-sm font-semibold text-blue-800 mb-2">📊 Peak Values (Click to Navigate)</h5>
-                  <div className="flex gap-4">
-                    {maxMinData.max && (
-                      <button
-                        onClick={() => navigateToMaxMin('max')}
-                        className="flex items-center gap-2 px-3 py-2 bg-green-100 hover:bg-green-200 text-green-800 rounded-lg transition-colors duration-200 border border-green-300"
-                      >
-                        <span className="text-lg">📈</span>
-                        <div className="text-left">
-                          <div className="text-xs font-medium">MAX</div>
-                          <div className="text-sm font-bold">{maxMinData.max.value.toFixed(2)}</div>
-                          <div className="text-xs text-green-600">{maxMinData.max.channel}</div>
-                </div>
-                      </button>
-                    )}
-                    {maxMinData.min && (
-                      <button
-                        onClick={() => navigateToMaxMin('min')}
-                        className="flex items-center gap-2 px-3 py-2 bg-red-100 hover:bg-red-200 text-red-800 rounded-lg transition-colors duration-200 border border-red-300"
-                      >
-                        <span className="text-lg">📉</span>
-                        <div className="text-left">
-                          <div className="text-xs font-medium">MIN</div>
-                          <div className="text-sm font-bold">{maxMinData.min.value.toFixed(2)}</div>
-                          <div className="text-xs text-red-600">{maxMinData.min.channel}</div>
-            </div>
-                      </button>
-                    )}
+          </div>
+        </div>
+        <div className="p-6">
+          <UploadZone
+            fileInputRef={fileInputRef as React.RefObject<HTMLInputElement>}
+            handleFileUpload={handleFileUpload}
+            handleClick={handleClick}
+            handleDrop={handleDrop}
+          />
+        </div>
+      </div>
+  
+          {/* Status Section */}
+          <StatusDisplay loading={loading} isLoadingChunk={isLoadingChunk} error={error} />
+  
+      {/* File Information */}
+      {fileInfo && (
+        <div className="space-y-6">
+          {/* Grafana-style Recording Info Panel */}
+          <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg flex items-center justify-center">
+                    <Info className="w-4 h-4 text-white" />
                   </div>
-                  <div className="mt-2 text-xs text-blue-600">
-                    💡 Click on MAX or MIN to view 20 minutes around that value
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">Recording Overview</h2>
+                    <p className="text-sm text-slate-500">EDF file metadata and channel information</p>
                   </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                  <span className="text-xs text-emerald-600 font-medium">Active</span>
+                </div>
+              </div>
+            </div>
+            <div className="p-6">
+              <FileInfoDisplay fileInfo={fileInfo} />
+            </div>
+          </div>
+  
+          {/* Grafana-style Analysis Configuration Panel */}
+          <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center">
+                    <Settings className="w-4 h-4 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">Analysis Configuration</h2>
+                    <p className="text-sm text-slate-500">Configure visualization and analysis parameters</p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                  <span className="text-xs text-purple-600 font-medium">Configured</span>
+                </div>
+              </div>
+            </div>
+            <div className="p-6">
+                  <ModeSelector
+                    fileInfo={fileInfo}
+                    multiChannelMode={multiChannelMode}
+                    ahiMode={ahiMode}
+                    selectedChannel={selectedChannel}
+                    selectedChannels={selectedChannels}
+                    ahiFlowChannel={ahiFlowChannel}
+                    ahiSpo2Channel={ahiSpo2Channel}
+                    ahiResults={ahiResults}
+                    ahiAnalyzing={ahiAnalyzing}
+                    showEventOverlays={showEventOverlays}
+                    handleModeSwitch={handleModeSwitch}
+                    setSelectedChannel={setSelectedChannel}
+                    handleChannelSelect={handleChannelSelect}
+                    setAhiFlowChannel={setAhiFlowChannel}
+                    setAhiSpo2Channel={setAhiSpo2Channel}
+                    handleAHIAnalysis={handleAHIAnalysis}
+                    setShowEventOverlays={setShowEventOverlays}
+              navigateToEvent={navigateToEvent}
+              currentEventIndex={currentEventIndex}
+            />
+            </div>
+          </div>
+  
+          {/* Grafana-style Channel Statistics Panel */}
+          {Object.keys(channelStats).length > 0 && (
+            <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
+              <div className="border-b border-slate-200 px-6 py-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-amber-600 rounded-lg flex items-center justify-center">
+                      <BarChart3 className="w-4 h-4 text-white" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-900">Channel Statistics</h2>
+                      <p className="text-sm text-slate-500">Statistical analysis of signal channels</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></div>
+                    <span className="text-xs text-amber-600 font-medium">Computing</span>
+                  </div>
+                </div>
+              </div>
+              <div className="p-6">
+                <ChannelStatsDisplay channelStats={channelStats} />
+              </div>
+            </div>
+          )}
+  
+          {/* Grafana-style Main Visualization Panel */}
+          <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center">
+                    <Activity className="w-4 h-4 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">Signal Visualization</h2>
+                    <p className="text-sm text-slate-500">Real-time polysomnographic data analysis</p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-4">
+                  {(isLoadingChunk || (ahiMode && loadingChannels.size > 0)) ? (
+                    <div className="flex items-center space-x-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                      <span className="text-xs text-blue-600 font-medium">Loading data...</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center space-x-2">
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                      <span className="text-xs text-green-600 font-medium">Live</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="p-6 space-y-6">
+  
+              {/* Grafana-style Time Range Controls */}
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-2">
+                    <Calendar className="w-4 h-4 text-slate-600" />
+                    <h3 className="text-sm font-semibold text-slate-900">Time Range</h3>
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono">
+                    Query Inspector
+                  </div>
+                </div>
+                    {fileInfo && (
+                      <div className="text-xs text-slate-500 mb-3">
+                        Recording time: {new Date(fileInfo.startTime).toLocaleTimeString('en-GB', { hour12: false })} -{' '}
+                        {new Date(new Date(fileInfo.startTime).getTime() + fileInfo.duration * 1000).toLocaleTimeString('en-GB', {
+                          hour12: false,
+                        })}
+                      </div>
+                    )}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">From</label>
+                    <input
+                      type="time"
+                      value={startTime}
+                      onChange={(e) => setStartTime(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">To</label>
+                    <input
+                      type="time"
+                      value={endTime}
+                      onChange={(e) => setEndTime(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    />
+                  </div>
+                  <button
+                    onClick={handleCustomInterval}
+                    className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-2 rounded-md text-sm hover:from-blue-700 hover:to-blue-800 transition-all duration-200 flex items-center justify-center space-x-2 font-medium shadow-sm"
+                  >
+                    <ZoomIn className="w-4 h-4" />
+                    <span>Apply Range</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Grafana-style Chart Controls */}
+              <div className="flex justify-between items-center">
+                <div className="flex items-center space-x-3">
+                  <div className="w-6 h-6 bg-gradient-to-br from-slate-600 to-slate-700 rounded flex items-center justify-center">
+                    <BarChart3 className="w-3 h-3 text-white" />
+                  </div>
+                  <h3 className="text-base font-semibold text-slate-900">Signal Data</h3>
+                  <div className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded font-mono">
+                    Real-time
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={handleFullNightView}
+                    className="bg-gradient-to-r from-slate-800 to-slate-900 text-white px-3 py-2 rounded-md text-sm hover:from-slate-900 hover:to-black transition-all duration-200 flex items-center space-x-2 shadow-sm"
+                  >
+                    <Eye className="w-4 h-4" />
+                    <span>Full View</span>
+                  </button>
+                </div>
+              </div>
+  
+              {/* Grafana-style Peak Analysis Panel - Hide in AHI mode */}
+              {!ahiMode && ((maxMinData.max || maxMinData.min) || (multiChannelMode && maxMinData.allChannels)) && (
+                <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
+                  <div className="border-b border-slate-200 px-6 py-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg flex items-center justify-center">
+                          <TrendingUp className="w-4 h-4 text-white" />
+                        </div>
+                        <div>
+                          <h4 className="text-lg font-semibold text-slate-900">Peak Analysis</h4>
+                          <p className="text-sm text-slate-500">
+                            {multiChannelMode ? 'Peak values per channel with navigation' : 'Global peak values with navigation'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-4">
+                        {/* Professional Show Markers Toggle */}
+                        <div className="flex items-center space-x-3">
+                          <span className="text-sm font-medium text-slate-700">Chart Markers</span>
+                          <button
+                            onClick={() => setShowMaxMinMarkers(!showMaxMinMarkers)}
+                            className={`relative inline-flex h-6 w-12 items-center rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 shadow-sm ${
+                              showMaxMinMarkers 
+                                ? 'bg-gradient-to-r from-emerald-500 to-emerald-600' 
+                                : 'bg-slate-300 hover:bg-slate-400'
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 shadow-sm ${
+                                showMaxMinMarkers ? 'translate-x-7' : 'translate-x-1'
+                              }`}
+                            />
+                          </button>
+                        </div>
+                        
+                        {/* Collapsible Toggle */}
+                        <button
+                          onClick={() => setShowMaxMinSection(!showMaxMinSection)}
+                          className="p-2 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors duration-200"
+                          title={showMaxMinSection ? "Collapse Peak Values" : "Expand Peak Values"}
+                        >
+                          {showMaxMinSection ? (
+                            <ChevronUp className="w-4 h-4 text-slate-600" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-slate-600" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Collapsible Content */}
+                  {showMaxMinSection && (
+                    <div className="p-6">
+                      {multiChannelMode && maxMinData.allChannels ? (
+                        // Multi-channel mode: Professional channel cards
+                        <div className="space-y-4">
+                          {Object.entries(maxMinData.allChannels).map(([channel, data]) => {
+                            const channelData = data as {
+                              max: { value: number; time: number };
+                              min: { value: number; time: number };
+                            };
+                            return (
+                              <div key={channel} className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                                <div className="flex items-center justify-between mb-3">
+                                  <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-wide">{channel}</h5>
+                                  <div className="text-xs text-slate-500 font-mono">Channel Analysis</div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  {channelData.max && (
+                                    <button
+                                      onClick={() => navigateToChannelMaxMin(channel, 'max')}
+                                      className="flex items-center gap-3 p-3 bg-gradient-to-r from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 border border-green-200 rounded-lg transition-all duration-200 text-left group"
+                                    >
+                                      <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-green-600 rounded-lg flex items-center justify-center group-hover:scale-110 transition-transform">
+                                        <TrendingUp className="w-5 h-5 text-white" />
+                                      </div>
+                                      <div>
+                                        <div className="text-xs font-medium text-green-600 uppercase tracking-wide">Maximum</div>
+                                        <div className="text-lg font-bold text-green-800">{channelData.max.value.toFixed(2)}</div>
+                                        <div className="text-xs text-green-600 font-mono">at {formatEDFTimestamp(channelData.max.time)}</div>
+                                      </div>
+                                    </button>
+                                  )}
+                                  {channelData.min && (
+                                    <button
+                                      onClick={() => navigateToChannelMaxMin(channel, 'min')}
+                                      className="flex items-center gap-3 p-3 bg-gradient-to-r from-red-50 to-rose-50 hover:from-red-100 hover:to-rose-100 border border-red-200 rounded-lg transition-all duration-200 text-left group"
+                                    >
+                                      <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-red-600 rounded-lg flex items-center justify-center group-hover:scale-110 transition-transform">
+                                        <TrendingDown className="w-5 h-5 text-white" />
+                                      </div>
+                                      <div>
+                                        <div className="text-xs font-medium text-red-600 uppercase tracking-wide">Minimum</div>
+                                        <div className="text-lg font-bold text-red-800">{channelData.min.value.toFixed(2)}</div>
+                                        <div className="text-xs text-red-600 font-mono">at {formatEDFTimestamp(channelData.min.time)}</div>
+                                      </div>
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        // Single channel mode: Professional global cards
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {maxMinData.max && (
+                            <button
+                              onClick={() => navigateToMaxMin('max')}
+                              className="flex items-center gap-4 p-6 bg-gradient-to-br from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 border border-green-200 rounded-lg transition-all duration-200 text-left group shadow-sm"
+                            >
+                              <div className="w-12 h-12 bg-gradient-to-br from-green-500 to-green-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
+                                <TrendingUp className="w-6 h-6 text-white" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-medium text-green-600 uppercase tracking-wide mb-1">Global Maximum</div>
+                                <div className="text-2xl font-bold text-green-800">{maxMinData.max.value.toFixed(2)}</div>
+                                <div className="text-sm text-green-700 font-medium">{maxMinData.max.channel}</div>
+                                <div className="text-xs text-green-600 font-mono mt-1">at {formatEDFTimestamp(maxMinData.max.time)}</div>
+                              </div>
+                            </button>
+                          )}
+                          {maxMinData.min && (
+                            <button
+                              onClick={() => navigateToMaxMin('min')}
+                              className="flex items-center gap-4 p-6 bg-gradient-to-br from-red-50 to-rose-50 hover:from-red-100 hover:to-rose-100 border border-red-200 rounded-lg transition-all duration-200 text-left group shadow-sm"
+                            >
+                              <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-red-600 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
+                                <TrendingDown className="w-6 h-6 text-white" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-medium text-red-600 uppercase tracking-wide mb-1">Global Minimum</div>
+                                <div className="text-2xl font-bold text-red-800">{maxMinData.min.value.toFixed(2)}</div>
+                                <div className="text-sm text-red-700 font-medium">{maxMinData.min.channel}</div>
+                                <div className="text-xs text-red-600 font-mono mt-1">at {formatEDFTimestamp(maxMinData.min.time)}</div>
+                              </div>
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Professional Help Section */}
+                      <div className="mt-6 p-4 bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded-lg">
+                        <div className="flex items-start space-x-3">
+                          <Info className="w-5 h-5 text-slate-600 mt-0.5" />
+                          <div>
+                            <p className="text-sm font-medium text-slate-700 mb-1">Peak Analysis Guide</p>
+                            <p className="text-xs text-slate-600">
+                              {multiChannelMode
+                                ? 'Click on any peak value to navigate to a 20-minute window around that point. Toggle chart markers to show/hide peak indicators on the visualization.'
+                                : 'Click on peak values to navigate to a 20-minute window around that point. Toggle chart markers for cleaner visualization.'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
-              <EDFChart
-                chartRef={chartRef}
-                chartJSData={chartJSData}
-                chartOptions={chartOptions}
-                isLoadingChunk={isLoadingChunk || loadingChannels.size > 0}
-                handleChartDoubleClick={handleChartDoubleClick}
-                handleChartClick={handleChartClick}
-                height={ahiMode ? 600 : 500} // Increased height for AHI timeline
-              />
+  
+              {/* Grafana-style Chart Container */}
+              <div className="bg-slate-900 border border-slate-700 rounded-lg overflow-hidden">
+                <div className="bg-slate-800 px-4 py-2 border-b border-slate-700">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                      <span className="text-xs text-slate-300 font-medium">Live Chart</span>
+                    </div>
+                    <div className="text-xs text-slate-400 font-mono">
+                      {ahiMode ? '600px' : '500px'} × Auto
+                    </div>
+                  </div>
+                </div>
+                <div className="p-2 bg-slate-900">
+                  <EDFChart
+                    chartRef={chartRef}
+                    chartJSData={chartJSData}
+                    chartOptions={chartOptions}
+                    isLoadingChunk={isLoadingChunk || loadingChannels.size > 0}
+                    handleChartDoubleClick={handleChartDoubleClick}
+                    handleChartClick={handleChartClick}
+                    height={ahiMode ? 600 : 500}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
     </div>
   );
 }
-
-
-
