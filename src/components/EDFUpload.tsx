@@ -41,6 +41,7 @@ import FileInfoDisplay from './FileInfoDisplay';
 import ModeSelector from './ModeSelector';
 import ChannelStatsDisplay from './ChannelStatsDisplay';
 import EDFChart from './EDFChart';
+import { endpoints } from '../config/api.config';
 
 
 ChartJS.register(
@@ -248,7 +249,7 @@ const fetchDownsampledData = useCallback(async (
 
     try {
       const response = await axios.get<{ data: number[] }>(
-      `http://localhost:5000/api/upload/edf-chunk-downsample`,
+      endpoints.edfChunkDownsample,
       {
         params: {
           filePath: filePath,
@@ -634,7 +635,7 @@ const findMaxMinValues = useCallback(async () => {
     const startSec = viewport?.start || 0;
     const endSec = viewport?.end || fileInfo.duration;
     
-    const response = await axios.post('http://localhost:5000/api/upload/max-min-values', {
+    const response = await axios.post(endpoints.maxMinValues, {
       filePath: fileInfo.tempFilePath,
       channels: channelsToAnalyze,
       startSec: startSec,
@@ -781,7 +782,7 @@ const handleAHIAnalysis = useCallback(async () => {
 
   try {
     const response = await axios.post<AHIResults & { success: boolean }>(
-      'http://localhost:5000/api/upload/ahi-analysis',
+      endpoints.ahiAnalysis,
       {
         filePath: fileInfo.tempFilePath,
         flowChannel: ahiFlowChannel,
@@ -1011,7 +1012,7 @@ const channelDataRef = useRef(channelData);
         });
 
         const response = await axios.get<{ data: number[] }>(
-          `http://localhost:5000/api/upload/edf-chunk?filePath=${encodeURIComponent(fileInfo.tempFilePath)}&channel=${encodeURIComponent(channel)}&start_sample=0&num_samples=${initialNumSamples}`
+          `${endpoints.edfChunk}?filePath=${encodeURIComponent(fileInfo.tempFilePath)}&channel=${encodeURIComponent(channel)}&start_sample=0&num_samples=${initialNumSamples}`
         );
 
         const chunkData = response.data.data;
@@ -1104,7 +1105,7 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
         channels: {
           [channel: string]: number[];
         };
-      }>(`http://localhost:5000/api/upload/edf-multi-chunk`, {
+        }>(endpoints.edfMultiChunk, {
         params: {
           filePath: fileInfo.tempFilePath,
           channels: JSON.stringify(selectedChannels),
@@ -1188,7 +1189,7 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
         const response = await axios.get<{
           data: number[];
           stats?: ChannelStats;
-        }>(`http://localhost:5000/api/upload/edf-chunk-downsample`, {
+        }>(endpoints.edfChunkDownsample, {
           params: {
             filePath: fileInfo.tempFilePath,
             channel,
@@ -1779,7 +1780,7 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
     try {
       console.log("[DEBUG] Sending request to backend...");
       const response = await axios.post<EDFFileInfo>(
-        "http://localhost:5000/api/upload",
+        endpoints.upload,
         formData,
         { headers: { "Content-Type": "multipart/form-data" } }
       );
