@@ -20,24 +20,24 @@ export default function Home() {
     <div className="min-h-screen bg-slate-50">
       {/* Shadcn-style Dashboard Header */}
       <header className="sticky top-0 z-50 w-full border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/60">
-        <div className="container flex h-16 items-center">
+        <div className="container flex h-20 items-center px-6 lg:px-8">
           {/* Mobile menu button */}
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="inline-flex items-center justify-center rounded-md p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 lg:hidden"
+            className="inline-flex items-center justify-center rounded-md p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500 lg:hidden mr-3"
           >
             {sidebarOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
           </button>
 
           {/* Logo and brand */}
-          <div className="flex items-center space-x-4 lg:space-x-6">
-            <div className="flex items-center space-x-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-lg">
+          <div className="flex items-center space-x-6 lg:space-x-8">
+            <div className="flex items-center space-x-4">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-lg">
                 <Brain className="h-6 w-6" />
               </div>
-              <div>
-                <h1 className="text-xl font-semibold text-slate-900">SomnoViz</h1>
-                <p className="text-xs text-slate-500">Sleep Study Platform</p>
+              <div className="space-y-0.5">
+                <h1 className="text-xl font-semibold text-slate-900 leading-tight">SomnoViz</h1>
+                <p className="text-xs text-slate-500 leading-tight">Sleep Study Platform</p>
               </div>
             </div>
           </div>

@@ -29,6 +29,7 @@ import {
   Info,
   Settings,
   Eye,
+  EyeOff,
   ZoomIn,
   Calendar,
   ChevronDown,
@@ -2157,24 +2158,42 @@ function handleCustomInterval() {
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center space-x-4">
-                        {/* Professional Show Markers Toggle */}
-                        <div className="flex items-center space-x-3">
-                          <span className="text-sm font-medium text-slate-700">Chart Markers</span>
-                          <button
-                            onClick={() => setShowMaxMinMarkers(!showMaxMinMarkers)}
-                            className={`relative inline-flex h-6 w-12 items-center rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 shadow-sm ${
-                              showMaxMinMarkers 
-                                ? 'bg-gradient-to-r from-emerald-500 to-emerald-600' 
-                                : 'bg-slate-300 hover:bg-slate-400'
-                            }`}
-                          >
-                            <span
-                              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 shadow-sm ${
-                                showMaxMinMarkers ? 'translate-x-7' : 'translate-x-1'
-                              }`}
-                            />
-                          </button>
+                        <div className="flex items-center space-x-4">
+                          {/* Professional Peak Markers Toggle */}
+                          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 w-full">
+                            <div className="flex items-center justify-between gap-4 sm:gap-6 md:gap-8">
+                              <div className="flex items-center space-x-2 sm:space-x-3 flex-1 min-w-0">
+                                {showMaxMinMarkers ? (
+                                  <Eye className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                                ) : (
+                                  <EyeOff className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <span className="text-sm font-medium text-slate-900 block">Peak Markers Track</span>
+                                  <p className="text-xs text-slate-500 hidden sm:block">Display min/max markers on the visualization chart</p>
+                                </div>
+                              </div>
+                              <label className="flex items-center cursor-pointer flex-shrink-0">
+                              <div className="relative">
+                                <input
+                                  type="checkbox"
+                                  className="sr-only"
+                                  checked={showMaxMinMarkers}
+                                  onChange={(e) => setShowMaxMinMarkers(e.target.checked)}
+                                />
+                                <div
+                                  className={`block w-12 h-6 rounded-full transition-colors ${
+                                    showMaxMinMarkers ? 'bg-blue-600' : 'bg-slate-300'
+                                  }`}
+                                ></div>
+                                <div
+                                  className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${
+                                    showMaxMinMarkers ? 'transform translate-x-6' : ''
+                                  }`}
+                                ></div>
+                              </div>
+                            </label>
+                          </div>
                         </div>
                         
                         {/* Collapsible Toggle */}

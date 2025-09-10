@@ -360,27 +360,94 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
                 {/* Professional AHI Score Display */}
                 <div className="mb-6">
                   <div className="bg-gradient-to-r from-slate-50 to-slate-100 rounded-lg p-6 border border-slate-200">
-                    <div className="flex items-center justify-center space-x-8">
-                      <div className="text-center">
-                        <div
-                          className="text-4xl font-bold mb-2"
-                          style={{ color: ahiResults.ahi_analysis.severity_color }}
-                        >
-                          {ahiResults.ahi_analysis.ahi_score}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-center space-x-8 flex-1">
+                        <div className="text-center">
+                          <div
+                            className="text-4xl font-bold mb-2"
+                            style={{ color: '#363e5d' }}
+                          >
+                            {ahiResults.ahi_analysis.ahi_score}
+                          </div>
+                          <div className="text-xs font-medium text-slate-600 uppercase tracking-wide">AHI Score</div>
+                          <div className="text-xs text-slate-500">Events/Hour</div>
                         </div>
-                        <div className="text-xs font-medium text-slate-600 uppercase tracking-wide">AHI Score</div>
-                        <div className="text-xs text-slate-500">Events/Hour</div>
+                        <div className="w-px h-16 bg-slate-300"></div>
+                        <div className="text-center">
+                          <div
+                            className="text-xl font-semibold mb-2"
+                            style={{ color: '#363e5d' }}
+                          >
+                            {ahiResults.ahi_analysis.severity}
+                          </div>
+                          <div className="text-xs font-medium text-slate-600 uppercase tracking-wide">Severity Level</div>
+                          <div className="text-xs text-slate-500">Clinical Assessment</div>
+                        </div>
                       </div>
-                      <div className="w-px h-16 bg-slate-300"></div>
-                      <div className="text-center">
-                        <div
-                          className="text-xl font-semibold mb-2"
-                          style={{ color: ahiResults.ahi_analysis.severity_color }}
-                        >
-                          {ahiResults.ahi_analysis.severity}
+                      
+                      {/* Vertical Severity Scale Legend - Right Aligned */}
+                      <div className="flex flex-col items-start space-y-1 ml-8">
+                        <div className="text-xs font-medium text-slate-600 uppercase tracking-wide mb-2">Severity Scale</div>
+                        
+                        {/* Severe (30+) */}
+                        <div className="flex items-center space-x-2">
+                          <div 
+                            className={`w-3 h-6 rounded-sm border ${
+                              ahiResults.ahi_analysis.ahi_score >= 30 
+                                ? 'bg-red-500 border-red-600' 
+                                : 'bg-red-100 border-red-200'
+                            }`}
+                          ></div>
+                          <div className="text-xs text-slate-600 min-w-0">
+                            <div className="font-medium">Severe</div>
+                            <div className="text-slate-500">30+</div>
+                          </div>
                         </div>
-                        <div className="text-xs font-medium text-slate-600 uppercase tracking-wide">Severity Level</div>
-                        <div className="text-xs text-slate-500">Clinical Assessment</div>
+                        
+                        {/* Moderate (15-29) */}
+                        <div className="flex items-center space-x-2">
+                          <div 
+                            className={`w-3 h-6 rounded-sm border ${
+                              ahiResults.ahi_analysis.ahi_score >= 15 && ahiResults.ahi_analysis.ahi_score < 30
+                                ? 'bg-orange-500 border-orange-600' 
+                                : 'bg-orange-100 border-orange-200'
+                            }`}
+                          ></div>
+                          <div className="text-xs text-slate-600 min-w-0">
+                            <div className="font-medium">Moderate</div>
+                            <div className="text-slate-500">15-29</div>
+                          </div>
+                        </div>
+                        
+                        {/* Mild (5-14) */}
+                        <div className="flex items-center space-x-2">
+                          <div 
+                            className={`w-3 h-6 rounded-sm border ${
+                              ahiResults.ahi_analysis.ahi_score >= 5 && ahiResults.ahi_analysis.ahi_score < 15
+                                ? 'bg-yellow-500 border-yellow-600' 
+                                : 'bg-yellow-100 border-yellow-200'
+                            }`}
+                          ></div>
+                          <div className="text-xs text-slate-600 min-w-0">
+                            <div className="font-medium">Mild</div>
+                            <div className="text-slate-500">5-14</div>
+                          </div>
+                        </div>
+                        
+                        {/* Normal (0-4) */}
+                        <div className="flex items-center space-x-2">
+                          <div 
+                            className={`w-3 h-6 rounded-sm border ${
+                              ahiResults.ahi_analysis.ahi_score < 5
+                                ? 'bg-green-500 border-green-600' 
+                                : 'bg-green-100 border-green-200'
+                            }`}
+                          ></div>
+                          <div className="text-xs text-slate-600 min-w-0">
+                            <div className="font-medium">Normal</div>
+                            <div className="text-slate-500">0-4</div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
