@@ -38,7 +38,7 @@ const FileInfoDisplay: React.FC<FileInfoDisplayProps> = ({ fileInfo }) => (
     <div className="bg-white rounded-lg shadow p-4">
       <div className="flex items-center gap-2 mb-2">
         <FaInfoCircle className="w-5 h-5 text-orange-600" />
-        <h3 className="font-semibold">Početak</h3>
+        <h3 className="font-semibold">Start Time</h3>
       </div>
       <p className="text-lg">{fileInfo.startTime}</p>
     </div>

@@ -1806,9 +1806,9 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
       console.error("[ERROR] Upload error:", err);
       if (axios.isAxiosError(err)) {
         console.error("[ERROR] Axios error details:", err.response?.data);
-        setError(`Greška pri obradi EDF fajla: ${err.response?.data?.error || err.message}`);
+        setError(`Error processing EDF file: ${err.response?.data?.error || err.message}`);
       } else {
-        setError("Greška pri obradi EDF fajla. Provjerite format i pokušajte ponovo.");
+        setError("Error processing EDF file. Please check the format and try again.");
       }
     } finally {
       setLoading(false);
