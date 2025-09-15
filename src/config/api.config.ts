@@ -3,18 +3,18 @@
 
 export const apiConfig = {
   // Base URL for API calls
-  // In development: uses the dev server proxy or relative paths
-  // In production: uses relative paths to work with any domain
-  baseURL: process.env.NODE_ENV === 'production' 
-    ? '/api'  // Relative path for production
-    : '/api', // Relative path for development (assumes proxy setup)
+  // In development: uses the dev server proxy
+  // In production: uses your Railway backend URL
+  baseURL: import.meta.env.PROD 
+    ? 'https://somnoviz-backend1-production.up.railway.app/api'  // Replace with YOUR actual Railway URL
+    : '/api', // Development proxy
   
   // Full base URL (only used if you need absolute URLs)
   getFullBaseURL: () => {
     if (typeof window !== 'undefined') {
       // Browser environment - construct from current location
-      const { protocol, hostname, port } = window.location;
-      const basePort = process.env.NODE_ENV === 'production' ? '' : ':5000';
+      const { protocol, hostname } = window.location;
+      const basePort = import.meta.env.PROD ? '' : ':5000';
       return `${protocol}//${hostname}${basePort}/api`;
     }
     // Server-side rendering fallback
