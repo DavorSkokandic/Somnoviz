@@ -6,8 +6,12 @@ export const apiConfig = {
   // In development: uses the dev server proxy
   // In production: uses your Railway backend URL
   baseURL: import.meta.env.PROD 
-    ? 'https://somnoviz-backend1-production.up.railway.app/api'  // Replace with YOUR actual Railway URL
+    ? 'https://somnoviz-backend1-production.up.railway.app/api'  // Your Railway URL
     : '/api', // Development proxy
+  
+  // Debug info
+  isDev: !import.meta.env.PROD,
+  currentURL: typeof window !== 'undefined' ? window.location.origin : 'unknown',
   
   // Full base URL (only used if you need absolute URLs)
   getFullBaseURL: () => {
@@ -36,5 +40,13 @@ export const endpoints = {
   cleanupStats: `${apiConfig.baseURL}/cleanup/stats`,
   cleanupManual: `${apiConfig.baseURL}/cleanup/manual`
 };
+
+// Debug logging
+console.log('[API Config Debug]', {
+  isDev: apiConfig.isDev,
+  baseURL: apiConfig.baseURL,
+  currentURL: apiConfig.currentURL,
+  uploadEndpoint: endpoints.upload
+});
 
 export default apiConfig;
