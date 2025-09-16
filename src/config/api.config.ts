@@ -26,19 +26,19 @@ export const apiConfig = {
   }
 };
 
-// API endpoints
+// API endpoints (relative paths since axios instance already has baseURL)
 export const endpoints = {
   // Upload endpoints
-  upload: `${apiConfig.baseURL}/upload`,
-  edfChunk: `${apiConfig.baseURL}/upload/edf-chunk`,
-  edfMultiChunk: `${apiConfig.baseURL}/upload/edf-multi-chunk`,
-  edfChunkDownsample: `${apiConfig.baseURL}/upload/edf-chunk-downsample`,
-  maxMinValues: `${apiConfig.baseURL}/upload/max-min-values`,
-  ahiAnalysis: `${apiConfig.baseURL}/upload/ahi-analysis`,
+  upload: `/upload`,
+  edfChunk: `/upload/edf-chunk`,
+  edfMultiChunk: `/upload/edf-multi-chunk`,
+  edfChunkDownsample: `/upload/edf-chunk-downsample`,
+  maxMinValues: `/upload/max-min-values`,
+  ahiAnalysis: `/upload/ahi-analysis`,
   
   // Cleanup endpoints
-  cleanupStats: `${apiConfig.baseURL}/cleanup/stats`,
-  cleanupManual: `${apiConfig.baseURL}/cleanup/manual`
+  cleanupStats: `/cleanup/stats`,
+  cleanupManual: `/cleanup/manual`
 };
 
 // Debug logging
@@ -46,7 +46,7 @@ console.log('[API Config Debug]', {
   isDev: apiConfig.isDev,
   baseURL: apiConfig.baseURL,
   currentURL: apiConfig.currentURL,
-  uploadEndpoint: endpoints.upload
+  uploadEndpoint: `${apiConfig.baseURL}${endpoints.upload}`
 });
 
 export default apiConfig;
