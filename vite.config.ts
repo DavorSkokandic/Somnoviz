@@ -9,9 +9,9 @@ export default defineConfig({
     proxy: {
       // Proxy all API calls to the backend server
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'https://somnoviz-backend.onrender.com',
         changeOrigin: true,
-        secure: false,
+        secure: true,
       }
     }
   }
