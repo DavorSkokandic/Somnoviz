@@ -1,0 +1,54 @@
+// Axios Configuration for SomnoViz
+import axios from 'axios';
+import { apiConfig } from './api.config';
+
+// Create axios instance with proper timeout and error handling
+export const axiosInstance = axios.create({
+  baseURL: apiConfig.baseURL,
+  timeout: 300000, // 5 minutes timeout for EDF processing
+  headers: {
+    'Content-Type': 'multipart/form-data',
+  },
+  // Important: Don't set withCredentials to true unless your backend specifically supports it
+  withCredentials: false,
+});
+
+// Request interceptor for debugging
+axiosInstance.interceptors.request.use(
+  (config) => {
+    console.log(`[AXIOS REQUEST] ${config.method?.toUpperCase()} ${config.url}`);
+    console.log('[AXIOS REQUEST] Base URL:', config.baseURL);
+    console.log('[AXIOS REQUEST] Full URL:', `${config.baseURL}${config.url}`);
+    return config;
+  },
+  (error) => {
+    console.error('[AXIOS REQUEST ERROR]', error);
+    return Promise.reject(error);
+  }
+);
+
+// Response interceptor for debugging and error handling
+axiosInstance.interceptors.response.use(
+  (response) => {
+    console.log(`[AXIOS RESPONSE] ${response.status} ${response.config.url}`);
+    return response;
+  },
+  (error) => {
+    console.error('[AXIOS RESPONSE ERROR]', error);
+    
+    if (error.code === 'ECONNABORTED') {
+      console.error('[AXIOS TIMEOUT] Request timed out after 5 minutes');
+      error.message = 'Request timed out. EDF file processing is taking longer than expected.';
+    } else if (error.response?.status === 0) {
+      console.error('[AXIOS NETWORK ERROR] Network error or CORS issue');
+      error.message = 'Network error. Please check your internet connection and try again.';
+    } else if (error.response?.status >= 500) {
+      console.error('[AXIOS SERVER ERROR] Server error:', error.response?.data);
+      error.message = `Server error: ${error.response?.data?.error || 'Internal server error'}`;
+    }
+    
+    return Promise.reject(error);
+  }
+);
+
+export default axiosInstance;

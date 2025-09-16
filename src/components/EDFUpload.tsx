@@ -1,6 +1,7 @@
 import { useRef, useState, useMemo, useEffect, useCallback } from "react";
 import { useDebouncedCallback } from "use-debounce";
 import axios from "axios";
+import axiosInstance from '../config/axios.config';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -248,7 +249,7 @@ const fetchDownsampledData = useCallback(async (
   });
 
     try {
-      const response = await axios.get<{ data: number[] }>(
+      const response = await axiosInstance.get<{ data: number[] }>(
       endpoints.edfChunkDownsample,
       {
         params: {
@@ -635,7 +636,7 @@ const findMaxMinValues = useCallback(async () => {
     const startSec = viewport?.start || 0;
     const endSec = viewport?.end || fileInfo.duration;
     
-    const response = await axios.post(endpoints.maxMinValues, {
+    const response = await axiosInstance.post(endpoints.maxMinValues, {
       filePath: fileInfo.tempFilePath,
       channels: channelsToAnalyze,
       startSec: startSec,
@@ -781,7 +782,7 @@ const handleAHIAnalysis = useCallback(async () => {
   });
 
   try {
-    const response = await axios.post<AHIResults & { success: boolean }>(
+    const response = await axiosInstance.post<AHIResults & { success: boolean }>(
       endpoints.ahiAnalysis,
       {
         filePath: fileInfo.tempFilePath,
@@ -1011,7 +1012,7 @@ const channelDataRef = useRef(channelData);
           initialNumSamples
         });
 
-        const response = await axios.get<{ data: number[] }>(
+        const response = await axiosInstance.get<{ data: number[] }>(
           `${endpoints.edfChunk}?filePath=${encodeURIComponent(fileInfo.tempFilePath)}&channel=${encodeURIComponent(channel)}&start_sample=0&num_samples=${initialNumSamples}`
         );
 
@@ -1186,7 +1187,7 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
     
           if (numSamples <= 0) continue;
 
-        const response = await axios.get<{
+        const response = await axiosInstance.get<{
           data: number[];
           stats?: ChannelStats;
         }>(endpoints.edfChunkDownsample, {
@@ -1779,10 +1780,9 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
 
     try {
       console.log("[DEBUG] Sending request to backend...");
-      const response = await axios.post<EDFFileInfo>(
+      const response = await axiosInstance.post<EDFFileInfo>(
         endpoints.upload,
-        formData,
-        { headers: { "Content-Type": "multipart/form-data" } }
+        formData
       );
 
       console.log("[DEBUG] Backend response:", response.data);
@@ -1948,7 +1948,7 @@ function handleCustomInterval() {
           />
         </div>
       </div>
-  
+
           {/* Status Section */}
           <StatusDisplay loading={loading} isLoadingChunk={isLoadingChunk} error={error} />
   
@@ -1962,7 +1962,7 @@ function handleCustomInterval() {
                 <div className="flex items-center space-x-3">
                   <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg flex items-center justify-center">
                     <Info className="w-4 h-4 text-white" />
-                  </div>
+        </div>
                   <div>
                     <h2 className="text-lg font-semibold text-slate-900">Recording Overview</h2>
                     <p className="text-sm text-slate-500">EDF file metadata and channel information</p>
@@ -2046,9 +2046,9 @@ function handleCustomInterval() {
               <div className="p-6">
                 <ChannelStatsDisplay channelStats={channelStats} />
               </div>
-            </div>
-          )}
-  
+        </div>
+      )}
+
           {/* Grafana-style Main Visualization Panel */}
           <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
             <div className="border-b border-slate-200 px-6 py-4">
@@ -2072,8 +2072,8 @@ function handleCustomInterval() {
                     <div className="flex items-center space-x-2">
                       <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                       <span className="text-xs text-green-600 font-medium">Live</span>
-                    </div>
-                  )}
+        </div>
+      )}
                 </div>
               </div>
             </div>
@@ -2090,13 +2090,13 @@ function handleCustomInterval() {
                     Query Inspector
                   </div>
                 </div>
-                    {fileInfo && (
+      {fileInfo && (
                       <div className="text-xs text-slate-500 mb-3">
                         Recording time: {new Date(fileInfo.startTime).toLocaleTimeString('en-GB', { hour12: false })} -{' '}
                         {new Date(new Date(fileInfo.startTime).getTime() + fileInfo.duration * 1000).toLocaleTimeString('en-GB', {
                           hour12: false,
                         })}
-                      </div>
+              </div>
                     )}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
                   <div className="space-y-2">
@@ -2107,7 +2107,7 @@ function handleCustomInterval() {
                       onChange={(e) => setStartTime(e.target.value)}
                       className="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                     />
-                  </div>
+            </div>
                   <div className="space-y-2">
                     <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">To</label>
                     <input
@@ -2116,7 +2116,7 @@ function handleCustomInterval() {
                       onChange={(e) => setEndTime(e.target.value)}
                       className="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                     />
-                  </div>
+              </div>
                   <button
                     onClick={handleCustomInterval}
                     className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-2 rounded-md text-sm hover:from-blue-700 hover:to-blue-800 transition-all duration-200 flex items-center justify-center space-x-2 font-medium shadow-sm"
@@ -2124,7 +2124,7 @@ function handleCustomInterval() {
                     <ZoomIn className="w-4 h-4" />
                     <span>Apply Range</span>
                   </button>
-                </div>
+            </div>
               </div>
 
               {/* Grafana-style Chart Controls */}
@@ -2132,11 +2132,11 @@ function handleCustomInterval() {
                 <div className="flex items-center space-x-3">
                   <div className="w-6 h-6 bg-gradient-to-br from-slate-600 to-slate-700 rounded flex items-center justify-center">
                     <BarChart3 className="w-3 h-3 text-white" />
-                  </div>
+            </div>
                   <h3 className="text-base font-semibold text-slate-900">Signal Data</h3>
                   <div className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded font-mono">
                     Real-time
-                  </div>
+              </div>
                 </div>
                 <div className="flex items-center space-x-2">
                   <button
@@ -2146,9 +2146,9 @@ function handleCustomInterval() {
                     <Eye className="w-4 h-4" />
                     <span>Full View</span>
                   </button>
-                </div>
-              </div>
-  
+            </div>
+          </div>
+
               {/* Grafana-style Peak Analysis Panel - Hide in AHI mode */}
               {!ahiMode && ((maxMinData.max || maxMinData.min) || (multiChannelMode && maxMinData.allChannels)) && (
                 <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
@@ -2181,10 +2181,10 @@ function handleCustomInterval() {
                                 </div>
                               </div>
                               <label className="flex items-center cursor-pointer flex-shrink-0">
-                              <div className="relative">
-                                <input
-                                  type="checkbox"
-                                  className="sr-only"
+              <div className="relative">
+                <input 
+                  type="checkbox" 
+                  className="sr-only" 
                                   checked={showMaxMinMarkers}
                                   onChange={(e) => setShowMaxMinMarkers(e.target.checked)}
                                 />
@@ -2198,11 +2198,11 @@ function handleCustomInterval() {
                                     showMaxMinMarkers ? 'transform translate-x-6' : ''
                                   }`}
                                 ></div>
-                              </div>
-                            </label>
+              </div>
+            </label>
                           </div>
-                        </div>
-                        
+          </div>
+
                         {/* Collapsible Toggle */}
                         <button
                           onClick={() => setShowMaxMinSection(!showMaxMinSection)}
@@ -2235,7 +2235,7 @@ function handleCustomInterval() {
                                 <div className="flex items-center justify-between mb-3">
                                   <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-wide">{channel}</h5>
                                   <div className="text-xs text-slate-500 font-mono">Channel Analysis</div>
-                                </div>
+                </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                   {channelData.max && (
                                     <button
@@ -2259,7 +2259,7 @@ function handleCustomInterval() {
                                     >
                                       <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-red-600 rounded-lg flex items-center justify-center group-hover:scale-110 transition-transform">
                                         <TrendingDown className="w-5 h-5 text-white" />
-                                      </div>
+            </div>
                                       <div>
                                         <div className="text-xs font-medium text-red-600 uppercase tracking-wide">Minimum</div>
                                         <div className="text-lg font-bold text-red-800">{channelData.min.value.toFixed(2)}</div>
@@ -2267,8 +2267,8 @@ function handleCustomInterval() {
                                       </div>
                                     </button>
                                   )}
-                                </div>
-                              </div>
+                </div>
+            </div>
                             );
                           })}
                         </div>
@@ -2292,7 +2292,7 @@ function handleCustomInterval() {
                             </button>
                           )}
                           {maxMinData.min && (
-                            <button
+              <button
                               onClick={() => navigateToMaxMin('min')}
                               className="flex items-center gap-4 p-6 bg-gradient-to-br from-red-50 to-rose-50 hover:from-red-100 hover:to-rose-100 border border-red-200 rounded-lg transition-all duration-200 text-left group shadow-sm"
                             >
@@ -2305,9 +2305,9 @@ function handleCustomInterval() {
                                 <div className="text-sm text-red-700 font-medium">{maxMinData.min.channel}</div>
                                 <div className="text-xs text-red-600 font-mono mt-1">at {formatEDFTimestamp(maxMinData.min.time)}</div>
                               </div>
-                            </button>
+              </button>
                           )}
-                        </div>
+            </div>
                       )}
 
                       {/* Professional Help Section */}
@@ -2324,8 +2324,8 @@ function handleCustomInterval() {
                           </div>
                         </div>
                       </div>
-                    </div>
-                  )}
+                </div>
+              )}
                 </div>
               )}
   
