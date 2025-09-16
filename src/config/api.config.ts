@@ -6,7 +6,7 @@ export const apiConfig = {
   // In development: uses the dev server proxy
   // In production: uses your Railway backend URL
   baseURL: import.meta.env.PROD 
-    ? 'https://somnoviz-backend1-production.up.railway.app/api'  // Your Railway URL
+    ? 'https://somnoviz-backend.onrender.com/api'  // Your Render backend URL
     : '/api', // Development proxy
   
   // Debug info
