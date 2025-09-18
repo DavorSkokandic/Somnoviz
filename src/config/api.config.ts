@@ -4,9 +4,9 @@
 export const apiConfig = {
   // Base URL for API calls
   // In development: uses the dev server proxy
-  // In production: uses your Railway backend URL
+  // In production: uses your Fly.io backend URL
   baseURL: import.meta.env.PROD 
-    ? 'https://somnoviz-backend.onrender.com/api'  // Your Render backend URL
+    ? 'https://somnoviz-backend1.fly.dev/api'  // Your Fly.io URL
     : '/api', // Development proxy
   
   // Debug info
