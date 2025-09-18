@@ -8,10 +8,14 @@ export default defineConfig({
   server: {
     proxy: {
       // Proxy all API calls to the backend server
+      // You can change this to http://localhost:5000 for local development
+      // or keep it as Fly.io for testing against production
       '/api': {
-        target: 'https://somnoviz-backend1.fly.dev',
+        target: process.env.VITE_API_TARGET || 'https://somnoviz-backend1.fly.dev',
         changeOrigin: true,
         secure: true,
+        // Add timeout for development
+        timeout: 600000, // 10 minutes
       }
     }
   }
