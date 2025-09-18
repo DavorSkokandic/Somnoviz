@@ -9,7 +9,7 @@ export default defineConfig({
     proxy: {
       // Proxy all API calls to the backend server
       '/api': {
-        target: 'https://somnoviz-backend.onrender.com',
+        target: 'https://somnoviz-backend1.fly.dev',
         changeOrigin: true,
         secure: true,
       }
