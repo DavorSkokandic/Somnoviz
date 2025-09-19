@@ -191,6 +191,7 @@ export default function EDFUpload() {
   const [ahiSpo2Channel, setAhiSpo2Channel] = useState<string>("");
   const [ahiResults, setAhiResults] = useState<AHIResults | null>(null);
   const [ahiAnalyzing, setAhiAnalyzing] = useState<boolean>(false);
+  const [ahiAnalysisProgress, setAhiAnalysisProgress] = useState<string>("");
   const [showEventOverlays, setShowEventOverlays] = useState<boolean>(true);
 
   // Stanja za upravljanje prikazanim podacima i zumiranjem
@@ -781,6 +782,27 @@ const handleAHIAnalysis = useCallback(async () => {
 
   setAhiAnalyzing(true);
   setError(null);
+  
+  // Professional analysis progress updates
+  const progressSteps = [
+    "Initializing Python analysis engine...",
+    "Loading full-resolution flow and SpO2 data...",
+    "Applying AASM clinical criteria...",
+    "Detecting apnea events (≥90% flow reduction)...",
+    "Detecting hypopnea events (30-90% flow reduction)...",
+    "Analyzing oxygen desaturation patterns...",
+    "Calculating AHI score and severity classification...",
+    "Generating comprehensive sleep metrics...",
+    "Finalizing analysis results..."
+  ];
+  
+  let currentStep = 0;
+  const progressInterval = setInterval(() => {
+    if (currentStep < progressSteps.length) {
+      setAhiAnalysisProgress(progressSteps[currentStep]);
+      currentStep++;
+    }
+  }, 800); // Update every 800ms
 
   console.log('[DEBUG] Starting AHI analysis:', {
     filePath: fileInfo.tempFilePath,
@@ -867,7 +889,9 @@ const handleAHIAnalysis = useCallback(async () => {
       setError('AHI analysis failed. Please try again.');
     }
   } finally {
+    clearInterval(progressInterval);
     setAhiAnalyzing(false);
+    setAhiAnalysisProgress("");
   }
 }, [fileInfo, ahiFlowChannel, ahiSpo2Channel, fetchDownsampledData]);
 
@@ -1557,7 +1581,7 @@ const chartOptions: any = useMemo(() => {
         },
         title: {
           display: true,
-          text: 'Vrijeme',
+          text: 'Time',
         },
         min: viewport && viewport.start !== undefined ? startTime + viewport.start * 1000 : undefined,
         max: viewport && viewport.end !== undefined ? startTime + viewport.end * 1000 : undefined,
@@ -1572,7 +1596,7 @@ const chartOptions: any = useMemo(() => {
         position: 'left',
         title: {
           display: true,
-          text: ahiMode ? 'Flow (Airflow)' : 'Amplituda',
+          text: ahiMode ? 'Flow (Airflow)' : 'Amplitude',
         },
       },
       // Secondary Y-axis for SpO2 in AHI mode
@@ -1613,8 +1637,56 @@ const chartOptions: any = useMemo(() => {
         enabled: true,
         algorithm: 'min-max',
       },
-      // Removed vertical annotation lines - using data points with labels instead
-      // Removed crowded annotation overlays - using professional event timeline instead
+      // Professional AHI Event Annotations
+      annotation: ahiMode && ahiResults && showEventOverlays ? {
+        annotations: ahiResults.all_events
+          .filter(event => {
+            // Only show events within current viewport
+            if (!viewport) return true;
+            return event.start_time >= viewport.start && event.start_time <= viewport.end;
+          })
+          .map((event: AHIEvent) => {
+            const eventStartTime = startTime + event.start_time * 1000;
+            const eventEndTime = startTime + event.end_time * 1000;
+            
+            return {
+              type: 'box',
+              xMin: eventStartTime,
+              xMax: eventEndTime,
+              backgroundColor: event.type === 'apnea' 
+                ? 'rgba(239, 68, 68, 0.15)'  // Red with transparency
+                : 'rgba(249, 115, 22, 0.15)', // Orange with transparency
+              borderColor: event.type === 'apnea' 
+                ? 'rgba(239, 68, 68, 0.8)' 
+                : 'rgba(249, 115, 22, 0.8)',
+              borderWidth: 1,
+              borderDash: event.type === 'apnea' ? [5, 5] : [3, 3],
+              yMin: 'chartMin',
+              yMax: 'chartMax',
+              label: {
+                enabled: true,
+                content: [
+                  `${event.type.toUpperCase()}`,
+                  `${event.duration.toFixed(1)}s`,
+                  event.spo2_drop ? `SpO2 -${event.spo2_drop.toFixed(1)}%` : ''
+                ].filter(Boolean),
+                position: 'start',
+                backgroundColor: event.type === 'apnea' 
+                  ? 'rgba(239, 68, 68, 0.9)' 
+                  : 'rgba(249, 115, 22, 0.9)',
+                color: 'white',
+                font: {
+                  size: 10,
+                  weight: 'bold'
+                },
+                padding: 4,
+                rotation: 0,
+                xAdjust: 0,
+                yAdjust: -10
+              }
+            };
+          })
+      } : {},
       tooltip: {
         callbacks: {
           title: (items: TooltipItem<'line'>[]) => {
@@ -1826,9 +1898,9 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
       console.error("[ERROR] Upload error:", err);
       if (axios.isAxiosError(err)) {
         console.error("[ERROR] Axios error details:", err.response?.data);
-        setError(`Greška pri obradi EDF fajla: ${err.response?.data?.error || err.message}`);
+        setError(`Error processing EDF file: ${err.response?.data?.error || err.message}`);
       } else {
-        setError("Greška pri obradi EDF fajla. Provjerite format i pokušajte ponovo.");
+        setError("Error processing EDF file. Please check the format and try again.");
       }
     } finally {
       setLoading(false);
@@ -1962,7 +2034,7 @@ function handleCustomInterval() {
           />
         </div>
       </div>
-  
+
           {/* Status Section */}
           <StatusDisplay loading={loading} isLoadingChunk={isLoadingChunk} error={error} />
   
@@ -1976,7 +2048,7 @@ function handleCustomInterval() {
                 <div className="flex items-center space-x-3">
                   <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg flex items-center justify-center">
                     <Info className="w-4 h-4 text-white" />
-                  </div>
+        </div>
                   <div>
                     <h2 className="text-lg font-semibold text-slate-900">Recording Overview</h2>
                     <p className="text-sm text-slate-500">EDF file metadata and channel information</p>
@@ -2023,6 +2095,7 @@ function handleCustomInterval() {
                     ahiSpo2Channel={ahiSpo2Channel}
                     ahiResults={ahiResults}
                     ahiAnalyzing={ahiAnalyzing}
+                    ahiAnalysisProgress={ahiAnalysisProgress}
                     showEventOverlays={showEventOverlays}
                     handleModeSwitch={handleModeSwitch}
                     setSelectedChannel={setSelectedChannel}
@@ -2060,9 +2133,9 @@ function handleCustomInterval() {
               <div className="p-6">
                 <ChannelStatsDisplay channelStats={channelStats} />
               </div>
-            </div>
-          )}
-  
+        </div>
+      )}
+
           {/* Grafana-style Main Visualization Panel */}
           <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
             <div className="border-b border-slate-200 px-6 py-4">
@@ -2086,8 +2159,8 @@ function handleCustomInterval() {
                     <div className="flex items-center space-x-2">
                       <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                       <span className="text-xs text-green-600 font-medium">Live</span>
-                    </div>
-                  )}
+        </div>
+      )}
                 </div>
               </div>
             </div>
@@ -2104,13 +2177,13 @@ function handleCustomInterval() {
                     Query Inspector
                   </div>
                 </div>
-                    {fileInfo && (
+      {fileInfo && (
                       <div className="text-xs text-slate-500 mb-3">
                         Recording time: {new Date(fileInfo.startTime).toLocaleTimeString('en-GB', { hour12: false })} -{' '}
                         {new Date(new Date(fileInfo.startTime).getTime() + fileInfo.duration * 1000).toLocaleTimeString('en-GB', {
                           hour12: false,
                         })}
-                      </div>
+              </div>
                     )}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
                   <div className="space-y-2">
@@ -2121,7 +2194,7 @@ function handleCustomInterval() {
                       onChange={(e) => setStartTime(e.target.value)}
                       className="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                     />
-                  </div>
+            </div>
                   <div className="space-y-2">
                     <label className="text-xs font-medium text-slate-600 uppercase tracking-wide">To</label>
                     <input
@@ -2130,7 +2203,7 @@ function handleCustomInterval() {
                       onChange={(e) => setEndTime(e.target.value)}
                       className="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
                     />
-                  </div>
+              </div>
                   <button
                     onClick={handleCustomInterval}
                     className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-4 py-2 rounded-md text-sm hover:from-blue-700 hover:to-blue-800 transition-all duration-200 flex items-center justify-center space-x-2 font-medium shadow-sm"
@@ -2138,7 +2211,7 @@ function handleCustomInterval() {
                     <ZoomIn className="w-4 h-4" />
                     <span>Apply Range</span>
                   </button>
-                </div>
+            </div>
               </div>
 
               {/* Grafana-style Chart Controls */}
@@ -2146,11 +2219,11 @@ function handleCustomInterval() {
                 <div className="flex items-center space-x-3">
                   <div className="w-6 h-6 bg-gradient-to-br from-slate-600 to-slate-700 rounded flex items-center justify-center">
                     <BarChart3 className="w-3 h-3 text-white" />
-                  </div>
+            </div>
                   <h3 className="text-base font-semibold text-slate-900">Signal Data</h3>
                   <div className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded font-mono">
                     Real-time
-                  </div>
+              </div>
                 </div>
                 <div className="flex items-center space-x-2">
                   <button
@@ -2160,9 +2233,9 @@ function handleCustomInterval() {
                     <Eye className="w-4 h-4" />
                     <span>Full View</span>
                   </button>
-                </div>
-              </div>
-  
+            </div>
+          </div>
+
               {/* Grafana-style Peak Analysis Panel - Hide in AHI mode */}
               {!ahiMode && ((maxMinData.max || maxMinData.min) || (multiChannelMode && maxMinData.allChannels)) && (
                 <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
@@ -2195,10 +2268,10 @@ function handleCustomInterval() {
                                 </div>
                               </div>
                               <label className="flex items-center cursor-pointer flex-shrink-0">
-                              <div className="relative">
-                                <input
-                                  type="checkbox"
-                                  className="sr-only"
+              <div className="relative">
+                <input 
+                  type="checkbox" 
+                  className="sr-only" 
                                   checked={showMaxMinMarkers}
                                   onChange={(e) => setShowMaxMinMarkers(e.target.checked)}
                                 />
@@ -2212,11 +2285,11 @@ function handleCustomInterval() {
                                     showMaxMinMarkers ? 'transform translate-x-6' : ''
                                   }`}
                                 ></div>
-                              </div>
-                            </label>
+              </div>
+            </label>
                           </div>
-                        </div>
-                        
+          </div>
+
                         {/* Collapsible Toggle */}
                         <button
                           onClick={() => setShowMaxMinSection(!showMaxMinSection)}
@@ -2249,7 +2322,7 @@ function handleCustomInterval() {
                                 <div className="flex items-center justify-between mb-3">
                                   <h5 className="text-sm font-semibold text-slate-900 uppercase tracking-wide">{channel}</h5>
                                   <div className="text-xs text-slate-500 font-mono">Channel Analysis</div>
-                                </div>
+                </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                   {channelData.max && (
                                     <button
@@ -2273,7 +2346,7 @@ function handleCustomInterval() {
                                     >
                                       <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-red-600 rounded-lg flex items-center justify-center group-hover:scale-110 transition-transform">
                                         <TrendingDown className="w-5 h-5 text-white" />
-                                      </div>
+            </div>
                                       <div>
                                         <div className="text-xs font-medium text-red-600 uppercase tracking-wide">Minimum</div>
                                         <div className="text-lg font-bold text-red-800">{channelData.min.value.toFixed(2)}</div>
@@ -2281,8 +2354,8 @@ function handleCustomInterval() {
                                       </div>
                                     </button>
                                   )}
-                                </div>
-                              </div>
+                </div>
+            </div>
                             );
                           })}
                         </div>
@@ -2306,7 +2379,7 @@ function handleCustomInterval() {
                             </button>
                           )}
                           {maxMinData.min && (
-                            <button
+              <button
                               onClick={() => navigateToMaxMin('min')}
                               className="flex items-center gap-4 p-6 bg-gradient-to-br from-red-50 to-rose-50 hover:from-red-100 hover:to-rose-100 border border-red-200 rounded-lg transition-all duration-200 text-left group shadow-sm"
                             >
@@ -2319,9 +2392,9 @@ function handleCustomInterval() {
                                 <div className="text-sm text-red-700 font-medium">{maxMinData.min.channel}</div>
                                 <div className="text-xs text-red-600 font-mono mt-1">at {formatEDFTimestamp(maxMinData.min.time)}</div>
                               </div>
-                            </button>
+              </button>
                           )}
-                        </div>
+            </div>
                       )}
 
                       {/* Professional Help Section */}
@@ -2338,8 +2411,8 @@ function handleCustomInterval() {
                           </div>
                         </div>
                       </div>
-                    </div>
-                  )}
+                </div>
+              )}
                 </div>
               )}
   

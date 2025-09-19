@@ -17,7 +17,7 @@ const FileInfoDisplay: React.FC<FileInfoDisplayProps> = ({ fileInfo }) => (
     <div className="bg-white rounded-lg shadow p-4">
       <div className="flex items-center gap-2 mb-2">
         <FaWaveSquare className="w-5 h-5 text-blue-600" />
-        <h3 className="font-semibold">Kanali</h3>
+        <h3 className="font-semibold">Channels</h3>
       </div>
       <p className="text-2xl font-bold">{fileInfo.channels.length}</p>
     </div>
@@ -31,7 +31,7 @@ const FileInfoDisplay: React.FC<FileInfoDisplayProps> = ({ fileInfo }) => (
     <div className="bg-white rounded-lg shadow p-4">
       <div className="flex items-center gap-2 mb-2">
         <FaClock className="w-5 h-5 text-purple-600" />
-        <h3 className="font-semibold">Trajanje</h3>
+        <h3 className="font-semibold">Duration</h3>
       </div>
       <p className="text-2xl font-bold">{fileInfo.duration.toFixed(1)}s</p>
     </div>
