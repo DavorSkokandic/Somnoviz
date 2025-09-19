@@ -66,6 +66,7 @@ type ModeSelectorProps = {
   ahiSpo2Channel: string;
   ahiResults: AHIResults | null;
   ahiAnalyzing: boolean;
+  ahiAnalysisProgress: string;
   showEventOverlays: boolean;
   // Handlers
   handleModeSwitch: (mode: 'single' | 'multi' | 'ahi') => void;
@@ -89,6 +90,7 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
   ahiSpo2Channel,
   ahiResults,
   ahiAnalyzing,
+  ahiAnalysisProgress,
   showEventOverlays,
   handleModeSwitch,
   setSelectedChannel,
@@ -322,12 +324,12 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
                     {ahiAnalyzing ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Analyzing...</span>
+                        <span>Analyzing Sleep Data...</span>
                       </>
                     ) : (
                       <>
                         <Stethoscope className="w-4 h-4" />
-                        <span>Start Analysis</span>
+                        <span>Start AHI Analysis</span>
                       </>
                     )}
                   </button>
@@ -335,6 +337,27 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Professional AHI Analysis Progress Display */}
+          {ahiAnalyzing && ahiAnalysisProgress && (
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6 shadow-sm">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg">
+                  <Loader2 className="w-6 h-6 text-white animate-spin" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-blue-700 font-semibold">AHI Analysis in Progress</span>
+                  </div>
+                  <p className="text-blue-600 text-sm">{ahiAnalysisProgress}</p>
+                  <div className="mt-2 flex items-center gap-2 text-xs text-blue-500">
+                    <Activity className="w-3 h-3" />
+                    <span>Professional medical-grade analysis using Python engine...</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Grafana-style AHI Results Panel */}
           {ahiResults && (
