@@ -1,6 +1,7 @@
 import { useRef, useState, useMemo, useEffect, useCallback } from "react";
 import { useDebouncedCallback } from "use-debounce";
-import axios from "axios";
+import { axiosInstance } from '../config/axios.config';
+import { AxiosError } from 'axios';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -249,21 +250,17 @@ const fetchDownsampledData = useCallback(async (
   });
 
     try {
-      const apiUrl = import.meta.env.PROD 
-        ? 'https://somnoviz-backend1.fly.dev/api/upload/edf-chunk-downsample'
-        : 'http://localhost:5000/api/upload/edf-chunk-downsample';
-      
-      const response = await axios.get<{ data: number[] }>(
-      apiUrl,
-      {
-        params: {
-          filePath: filePath,
-          channel: channel,
-          start_sample: startSample,
-          num_samples: numSamples,
-          target_points: targetPoints
+      const response = await axiosInstance.get<{ data: number[] }>(
+        endpoints.edfChunkDownsample,
+        {
+          params: {
+            filePath: filePath,
+            channel: channel,
+            start_sample: startSample,
+            num_samples: numSamples,
+            target_points: targetPoints
+          }
         }
-      }
       );
 
       const chunkData = response.data.data;
@@ -299,7 +296,7 @@ const fetchDownsampledData = useCallback(async (
 
   } catch (err: unknown) {
     console.error("Error fetching downsampled data:", err);
-    if (axios.isAxiosError(err)) {
+    if (err instanceof AxiosError) {
       console.error("Axios error details:", {
         status: err.response?.status,
         statusText: err.response?.statusText,
@@ -640,11 +637,7 @@ const findMaxMinValues = useCallback(async () => {
     const startSec = viewport?.start || 0;
     const endSec = viewport?.end || fileInfo.duration;
     
-    const apiUrl = import.meta.env.PROD 
-      ? 'https://somnoviz-backend1.fly.dev/api/upload/max-min-values'
-      : 'http://localhost:5000/api/upload/max-min-values';
-    
-    const response = await axios.post(apiUrl, {
+    const response = await axiosInstance.post(endpoints.maxMinValues, {
       filePath: fileInfo.tempFilePath,
       channels: channelsToAnalyze,
       startSec: startSec,
@@ -811,12 +804,8 @@ const handleAHIAnalysis = useCallback(async () => {
   });
 
   try {
-    const apiUrl = import.meta.env.PROD 
-      ? 'https://somnoviz-backend1.fly.dev/api/upload/ahi-analysis'
-      : 'http://localhost:5000/api/upload/ahi-analysis';
-    
-    const response = await axios.post<AHIResults & { success: boolean }>(
-      apiUrl,
+    const response = await axiosInstance.post<AHIResults & { success: boolean }>(
+      endpoints.ahiAnalysis,
       {
         filePath: fileInfo.tempFilePath,
         flowChannel: ahiFlowChannel,
@@ -883,7 +872,7 @@ const handleAHIAnalysis = useCallback(async () => {
     }
   } catch (err) {
     console.error('AHI analysis error:', err);
-    if (axios.isAxiosError(err)) {
+    if (err instanceof AxiosError) {
       setError(`AHI analysis failed: ${err.response?.data?.error || err.message}`);
     } else {
       setError('AHI analysis failed. Please try again.');
@@ -1047,7 +1036,7 @@ const channelDataRef = useRef(channelData);
           initialNumSamples
         });
 
-        const response = await axios.get<{ data: number[] }>(
+        const response = await axiosInstance.get<{ data: number[] }>(
           `${endpoints.edfChunk}?filePath=${encodeURIComponent(fileInfo.tempFilePath)}&channel=${encodeURIComponent(channel)}&start_sample=0&num_samples=${initialNumSamples}`
         );
 
@@ -1136,16 +1125,12 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
         boundedEnd
       });
 
-      const apiUrl = import.meta.env.PROD 
-        ? 'https://somnoviz-backend1.fly.dev/api/upload/edf-multi-chunk'
-        : 'http://localhost:5000/api/upload/edf-multi-chunk';
-      
-      const response = await axios.get<{
+      const response = await axiosInstance.get<{
         labels: number[];
         channels: {
           [channel: string]: number[];
         };
-        }>(apiUrl, {
+      }>(endpoints.edfMultiChunk, {
         params: {
           filePath: fileInfo.tempFilePath,
           channels: JSON.stringify(selectedChannels),
@@ -1202,7 +1187,7 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
       console.error(`Error fetching multi-channel data:`, err);
       
       // Log more details about the error
-      if (axios.isAxiosError(err)) {
+      if (err instanceof AxiosError) {
         console.error(`[DEBUG] Axios error details:`, {
           status: err.response?.status,
           statusText: err.response?.statusText,
@@ -1226,7 +1211,7 @@ const debouncedFetchMultiChunks = useDebouncedCallback(
     
           if (numSamples <= 0) continue;
 
-        const response = await axios.get<{
+        const response = await axiosInstance.get<{
           data: number[];
           stats?: ChannelStats;
         }>(endpoints.edfChunkDownsample, {
@@ -1867,12 +1852,8 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
 
     try {
       console.log("[DEBUG] Sending request to backend...");
-      const uploadUrl = import.meta.env.PROD 
-        ? 'https://somnoviz-backend1.fly.dev/api/upload'  // Production URL
-        : 'http://localhost:5000/api/upload';  // Development URL
-      
-      const response = await axios.post<EDFFileInfo>(
-        uploadUrl,
+      const response = await axiosInstance.post<EDFFileInfo>(
+        endpoints.upload,
         formData,
         { headers: { "Content-Type": "multipart/form-data" } }
       );
@@ -1896,7 +1877,7 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
       }
     } catch (err: unknown) {
       console.error("[ERROR] Upload error:", err);
-      if (axios.isAxiosError(err)) {
+      if (err instanceof AxiosError) {
         console.error("[ERROR] Axios error details:", err.response?.data);
         setError(`Error processing EDF file: ${err.response?.data?.error || err.message}`);
       } else {
