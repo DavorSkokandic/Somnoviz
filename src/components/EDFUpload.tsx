@@ -646,6 +646,11 @@ const findMaxMinValues = useCallback(async () => {
     
     console.log('[DEBUG] Max-min request data:', requestData);
     console.log('[DEBUG] Max-min endpoint:', endpoints.maxMinValues);
+    console.log('[DEBUG] Axios instance config for max-min:', {
+      baseURL: axiosInstance.defaults.baseURL,
+      headers: axiosInstance.defaults.headers,
+      timeout: axiosInstance.defaults.timeout
+    });
     
     const response = await axiosInstance.post(endpoints.maxMinValues, requestData);
     
@@ -817,6 +822,11 @@ const handleAHIAnalysis = useCallback(async () => {
     
     console.log('[DEBUG] AHI Analysis request data:', requestData);
     console.log('[DEBUG] AHI Analysis endpoint:', endpoints.ahiAnalysis);
+    console.log('[DEBUG] Axios instance config:', {
+      baseURL: axiosInstance.defaults.baseURL,
+      headers: axiosInstance.defaults.headers,
+      timeout: axiosInstance.defaults.timeout
+    });
     
     const response = await axiosInstance.post<AHIResults & { success: boolean }>(
       endpoints.ahiAnalysis,
