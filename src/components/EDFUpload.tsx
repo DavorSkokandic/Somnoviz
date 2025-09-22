@@ -637,12 +637,17 @@ const findMaxMinValues = useCallback(async () => {
     const startSec = viewport?.start || 0;
     const endSec = viewport?.end || fileInfo.duration;
     
-    const response = await axiosInstance.post(endpoints.maxMinValues, {
+    const requestData = {
       filePath: fileInfo.tempFilePath,
       channels: channelsToAnalyze,
       startSec: startSec,
       endSec: endSec
-    });
+    };
+    
+    console.log('[DEBUG] Max-min request data:', requestData);
+    console.log('[DEBUG] Max-min endpoint:', endpoints.maxMinValues);
+    
+    const response = await axiosInstance.post(endpoints.maxMinValues, requestData);
     
     if (response.data.success) {
       const backendData = response.data.data;
@@ -804,13 +809,18 @@ const handleAHIAnalysis = useCallback(async () => {
   });
 
   try {
+    const requestData = {
+      filePath: fileInfo.tempFilePath,
+      flowChannel: ahiFlowChannel,
+      spo2Channel: ahiSpo2Channel
+    };
+    
+    console.log('[DEBUG] AHI Analysis request data:', requestData);
+    console.log('[DEBUG] AHI Analysis endpoint:', endpoints.ahiAnalysis);
+    
     const response = await axiosInstance.post<AHIResults & { success: boolean }>(
       endpoints.ahiAnalysis,
-      {
-        filePath: fileInfo.tempFilePath,
-        flowChannel: ahiFlowChannel,
-        spo2Channel: ahiSpo2Channel
-      }
+      requestData
     );
 
     if (response.data.success) {
@@ -1855,7 +1865,11 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
       const response = await axiosInstance.post<EDFFileInfo>(
         endpoints.upload,
         formData,
-        { headers: { "Content-Type": "multipart/form-data" } }
+        { 
+          headers: { 
+            // Don't set Content-Type for FormData - let axios set it with boundary
+          }
+        }
       );
 
       console.log("[DEBUG] Backend response:", response.data);
