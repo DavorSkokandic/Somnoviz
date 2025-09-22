@@ -19,6 +19,17 @@ axiosInstance.interceptors.request.use(
     console.log(`[AXIOS REQUEST] ${config.method?.toUpperCase()} ${config.url}`);
     console.log('[AXIOS REQUEST] Base URL:', config.baseURL);
     console.log('[AXIOS REQUEST] Full URL:', `${config.baseURL}${config.url}`);
+    console.log('[AXIOS REQUEST] Headers before:', config.headers);
+    console.log('[AXIOS REQUEST] Data type:', typeof config.data);
+    console.log('[AXIOS REQUEST] Data:', config.data);
+    
+    // Ensure Content-Type is set correctly for JSON requests
+    if (config.data && typeof config.data === 'object' && !(config.data instanceof FormData)) {
+      config.headers['Content-Type'] = 'application/json';
+      console.log('[AXIOS REQUEST] Set Content-Type to application/json');
+    }
+    
+    console.log('[AXIOS REQUEST] Headers after:', config.headers);
     return config;
   },
   (error) => {
