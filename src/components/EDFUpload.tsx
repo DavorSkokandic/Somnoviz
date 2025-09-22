@@ -1321,7 +1321,7 @@ const chartJSData = useMemo(() => {
     ];
 
     // Add professional event timeline track (if events exist and overlays enabled)
-    if (ahiResults && showEventOverlays && ahiResults.all_events.length > 0 && fileInfo) {
+    if (ahiResults && showEventOverlays && ahiResults.all_events.length > 0 && fileInfo && flowData?.labels) {
       const eventTimelineData = createEventTimelineData(flowData.labels, ahiResults.all_events, fileInfo.startTime, currentEventIndex);
       
       // Add event timeline as mixed chart type
@@ -1442,7 +1442,7 @@ const chartJSData = useMemo(() => {
   // Always synthesize shared labels from viewport if available to ensure alignment
   const firstChannel = selectedChannels[0];
   let sharedLabels: Date[] = [];
-  if (viewport && fileInfo) {
+  if (viewport && fileInfo && firstChannel) {
     // Prefer length from first channel data, else from any non-empty channel
     let n = channelData[firstChannel]?.data?.length || 0;
     if (n === 0) {
