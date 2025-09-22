@@ -7,7 +7,7 @@ export const axiosInstance = axios.create({
   baseURL: apiConfig.baseURL,
   timeout: 600000, // 10 minutes timeout for EDF processing (Render free tier is slower)
   headers: {
-    'Content-Type': 'multipart/form-data',
+    'Content-Type': 'application/json', // Default to JSON, override for file uploads
   },
   // Important: Don't set withCredentials to true unless your backend specifically supports it
   withCredentials: false,
