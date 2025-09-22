@@ -23,10 +23,17 @@ axiosInstance.interceptors.request.use(
     console.log('[AXIOS REQUEST] Data type:', typeof config.data);
     console.log('[AXIOS REQUEST] Data:', config.data);
     
-    // Ensure Content-Type is set correctly for JSON requests
+    // Ensure Content-Type is set correctly for JSON requests (but NOT for FormData)
     if (config.data && typeof config.data === 'object' && !(config.data instanceof FormData)) {
-      config.headers['Content-Type'] = 'application/json';
-      console.log('[AXIOS REQUEST] Set Content-Type to application/json');
+      // Only set Content-Type if it's not already set or if it's not multipart
+      if (!config.headers['Content-Type'] || config.headers['Content-Type'] === 'multipart/form-data') {
+        config.headers['Content-Type'] = 'application/json';
+        console.log('[AXIOS REQUEST] Set Content-Type to application/json for JSON data');
+      }
+    } else if (config.data instanceof FormData) {
+      // For FormData, let axios set the Content-Type with boundary
+      delete config.headers['Content-Type'];
+      console.log('[AXIOS REQUEST] Removed Content-Type header for FormData (let axios set with boundary)');
     }
     
     console.log('[AXIOS REQUEST] Headers after:', config.headers);
