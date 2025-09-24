@@ -14,6 +14,7 @@ import {
   Legend,
   Chart, // Dodano Chart za pristup instanci grafa
   type TooltipItem, // Dodano za tipovanje tooltip callbacka - type-only import
+  type ChartOptions,
 } from "chart.js";
 import zoomPlugin from "chartjs-plugin-zoom";
 import annotationPlugin from "chartjs-plugin-annotation";
@@ -73,8 +74,10 @@ type EDFFileInfo = {
 };
 
 type ChannelData = {
-  labels: Date[];
-  data: number[];
+  labels?: Date[]; // Optional for backward compatibility
+  data: number[] | { x: Date; y: number }[]; // Support both formats
+  sampleRate?: number;
+  startTimeSec?: number;
 }
 
 type ChannelStats = {
@@ -1086,192 +1089,105 @@ const channelDataRef = useRef(channelData);
   }, [multiChannelMode, selectedChannels, fetchDataForChannels]);
 
 const handleFullNightView = () => {
-  if (!fileInfo || !selectedChannel) return;
-  
-  // Get the actual first and last sample timestamps
+  if (!fileInfo) return;
   const start = 0;
-  const end = fileInfo.duration;
-  
-  console.log(`[DEBUG] Full night view: ${start}s to ${end}s`);
+  const end = fileInfo.duration; // number of seconds in recording
   setViewport({ start, end });
 
   if (multiChannelMode) {
     debouncedFetchMultiChunks(start, end);
   } else {
-    // Use the same simplified approach as zoom/pan for consistency
-    handleZoomOrPan(start, end);
+    // single-channel: use fetchDownsampledData function
+    if (fileInfo.tempFilePath && selectedChannel) {
+    const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
+    const numSamples = Math.floor(fileInfo.duration * sampleRate);
+      fetchDownsampledData(fileInfo.tempFilePath, selectedChannel, 0, numSamples, 2000, start, end);
+    }
   }
 };
 const debouncedFetchMultiChunks = useDebouncedCallback(
-  async (start: number, end: number) => {
-    if (!fileInfo || selectedChannels.length === 0) return;
-
-    const duration = fileInfo.duration;
-
-    // ❗ Osiguraj granice uzorkovanja
-    const boundedStart = Math.max(0, start);
-    const boundedEnd = Math.min(duration, end);
-
-    if (boundedEnd <= boundedStart) return;
-    
-    // Smart multi-channel downsampling based on time range
-    const timeRange = boundedEnd - boundedStart;
-    
-    // Calculate optimal target points (SIMPLIFIED - same as single channel)
-    let targetPoints: number;
-    if (timeRange <= 60) { // 0-1 minute: Still keep reasonable detail
-      targetPoints = 800;
-    } else if (timeRange <= 600) { // 1-10 minutes: Lower detail
-      targetPoints = 600; 
-    } else if (timeRange <= 3600) { // 10min-1 hour: Even lower
-      targetPoints = 500;
-    } else { // 1+ hour: Very low for performance
-      targetPoints = 400;
-    }
-    
-    console.log(`[DEBUG] Multi-channel fetch: ${timeRange}s range, ${targetPoints} target points`);
-    
+  async (startSec: number, endSec: number) => {
+    if (!fileInfo || !selectedChannels || selectedChannels.length === 0) return;
     try {
-      // Use the efficient multi-channel endpoint; send seconds (backend converts)
-      const startSec = boundedStart;
-      const endSec = boundedEnd;
-      
-      console.log(`[DEBUG] Multi-channel request:`, {
-        channels: selectedChannels,
-        startSec,
-        endSec,
-        targetPoints,
-        boundedStart,
-        boundedEnd
-      });
-
-      const response = await axiosInstance.get<{
-        labels: number[];
-        channels: {
-          [channel: string]: number[];
-        };
-      }>(endpoints.edfMultiChunk, {
-        params: {
-          filePath: fileInfo.tempFilePath,
-          channels: JSON.stringify(selectedChannels),
-          start_sec: startSec,
-          end_sec: endSec,
-          max_points: targetPoints,
-        },
-      });
-
-      console.log(`[DEBUG] Multi-channel response:`, {
-        labelCount: response.data.labels?.length || 0,
-        channelCount: Object.keys(response.data.channels || {}).length,
-        channels: Object.keys(response.data.channels || {})
-      });
-
-      // Process the response for each channel
-      const newChannelData: { [channel: string]: ChannelData } = {};
-      const newChannelStats: { [channel: string]: ChannelStats } = {};
-
-      // Prefer backend labels (absolute ms) when provided and aligned
-      let labelsFromBackend: Date[] | null = null;
-      if (Array.isArray(response.data.labels) && response.data.labels.length > 0) {
-        labelsFromBackend = response.data.labels.map((ms) => new Date(ms));
+      setIsLoadingChunk(true);
+      // target_points = desired number of points per channel (downsample target)
+      // Use adaptive downsampling based on time range like single channel mode
+      const timeRange = endSec - startSec;
+      let target_points: number;
+      if (timeRange <= 60) {
+        target_points = 800;
+      } else if (timeRange <= 600) {
+        target_points = 600;
+      } else if (timeRange <= 3600) {
+        target_points = 500;
+      } else {
+        target_points = 400;
       }
 
-      for (const channel of selectedChannels) {
-        const series = response.data.channels?.[channel];
-        if (!series || series.length === 0) {
-          console.warn(`No data received for channel ${channel}`);
-          continue;
-        }
+      const params = {
+        filePath: fileInfo.tempFilePath,
+        channels: JSON.stringify(selectedChannels), // backend expects JSON string list of channels
+        start_sec: Math.floor(startSec), // send seconds as integer
+        end_sec: Math.ceil(endSec),
+        target_points,
+      };
 
-        let labels: Date[];
-        if (labelsFromBackend && labelsFromBackend.length === series.length) {
-          labels = labelsFromBackend;
-        } else {
-          const base = new Date(fileInfo.startTime);
-          labels = series.map((_: number, i: number) =>
-            addSeconds(base, boundedStart + (i * timeRange) / series.length)
-          );
-        }
+      const resp = await axiosInstance.get(endpoints.edfMultiChunk, { params });
 
-        newChannelData[channel] = { labels, data: series };
-        console.log(`[DEBUG] Processed channel ${channel}: ${series.length} points`);
+      // expect resp.data structure: { channels: [ { name, data: [...], sample_rate, start_time_sec, stats? }, ... ] }
+      const result = resp.data;
+      if (!result || !result.channels) {
+        console.warn("Multi chunk returned no channels", result);
+        return;
       }
-      
-      // Update state with all channels at once
-      setChannelData(prev => ({ ...prev, ...newChannelData }));
-      setChannelStats(prev => ({ ...prev, ...newChannelStats }));
-      
-      console.log(`[DEBUG] Multi-channel loaded: ${Object.keys(newChannelData).length} channels`);
-      
+
+      // Build new channelData and stats
+      setChannelData(prev => {
+        const next = { ...prev };
+        for (const chObj of result.channels) {
+          const name = chObj.name;
+          const dataArr: number[] = chObj.data || [];
+          const sampleRate: number = chObj.sample_rate ?? 1;
+          const start_time_sec: number = chObj.start_time_sec ?? (startSec); // fallback
+          // Convert to {x: Date, y: value}
+          const baseMs = new Date(fileInfo.startTime).getTime() + Math.round(start_time_sec * 1000);
+          const points = dataArr.map((v: number, i: number) => {
+            // i-th sample in returned downsample array corresponds to time = baseMs + i*(1000/sampleRate)
+            // but because downsample can aggregate, spacing is approximate; this is OK for visualization
+            const msOffset = Math.round((i * 1000) / sampleRate);
+            return { x: new Date(baseMs + msOffset), y: v };
+          });
+          next[name] = {
+            data: points,
+            sampleRate,
+            startTimeSec: start_time_sec,
+          };
+        }
+        return next;
+      });
+
+      // Stats (optional)
+      if (result.stats) {
+        setChannelStats(prev => ({ ...prev, ...result.stats }));
+      } else if (result.channels) {
+        // collect per-channel stats if present
+        const statsObj: Record<string, any> = {};
+        for (const chObj of result.channels) {
+          if (chObj.stats) statsObj[chObj.name] = chObj.stats;
+        }
+        if (Object.keys(statsObj).length) setChannelStats(prev => ({ ...prev, ...statsObj }));
+      }
     } catch (err) {
-      console.error(`Error fetching multi-channel data:`, err);
-      
-      // Log more details about the error
-      if (err instanceof AxiosError) {
-        console.error(`[DEBUG] Axios error details:`, {
-          status: err.response?.status,
-          statusText: err.response?.statusText,
-          data: err.response?.data,
-          message: err.message
-        });
-      }
-      
-      // Fallback to individual channel requests if multi-channel fails
-      console.log(`[DEBUG] Falling back to individual channel requests`);
-    
-    for (const channel of selectedChannels) {
-      try {
-          const channelIndex = fileInfo.channels.indexOf(channel);
-          const sampleRate = fileInfo.sampleRates[channelIndex];
-          
-          if (!sampleRate) continue;
-
-    const startSample = Math.floor(boundedStart * sampleRate);
-          const numSamples = Math.max(0, Math.floor(boundedEnd - boundedStart) * sampleRate);
-    
-          if (numSamples <= 0) continue;
-
-        const response = await axiosInstance.get<{
-          data: number[];
-          stats?: ChannelStats;
-        }>(endpoints.edfChunkDownsample, {
-          params: {
-            filePath: fileInfo.tempFilePath,
-            channel,
-            start_sample: startSample,
-            num_samples: numSamples,
-              target_points: targetPoints,
-          },
-        });
-
-        const chunkData = response.data?.data || [];
-          if (chunkData.length === 0) continue;
-
-        const startTime = new Date(fileInfo.startTime);
-          const labels = chunkData.map((_: number, i: number) => addSeconds(startTime, boundedStart + i / sampleRate));
-
-        setChannelData(prev => ({
-          ...prev,
-          [channel]: { labels, data: chunkData },
-        }));
-
-        if (response.data.stats) {
-          setChannelStats(prev => ({
-            ...prev,
-            [channel]: response.data.stats as ChannelStats,
-          }));
-        }
-        } catch (channelErr) {
-          console.error(`Error fetching data for channel ${channel}:`, channelErr);
-        }
-      }
+      console.error("Error fetching multi-channel chunk data:", err);
+    } finally {
+      setIsLoadingChunk(false);
     }
   },
-  120  // Optimized for smooth multi-channel interactions
+  300
 );
 // Generiraj boje za točke ako je SpO2 kanal
 
-const chartJSData = useMemo(() => {
+  const chartJSData: any = useMemo(() => {
   // AHI ANALYSIS MODE - Show Flow and SpO2 with event overlays
   if (ahiMode && ahiFlowChannel && ahiSpo2Channel) {
     const flowData = channelData[ahiFlowChannel];
@@ -1291,6 +1207,17 @@ const chartJSData = useMemo(() => {
     
     if (!flowData || !spo2Data) {
       console.log('[DEBUG] Missing channel data for AHI mode, returning empty chart');
+      return { labels: [], datasets: [] };
+    }
+
+    // Safety check for data arrays
+    if (!flowData.data || !Array.isArray(flowData.data) || flowData.data.length === 0) {
+      console.log('[DEBUG] Flow data is empty or invalid');
+      return { labels: [], datasets: [] };
+    }
+    
+    if (!spo2Data.data || !Array.isArray(spo2Data.data) || spo2Data.data.length === 0) {
+      console.log('[DEBUG] SpO2 data is empty or invalid');
       return { labels: [], datasets: [] };
     }
 
@@ -1316,12 +1243,14 @@ const chartJSData = useMemo(() => {
         borderWidth: 2,
         yAxisID: 'y1', // Secondary Y-axis for SpO2
         // Color SpO2 points red when < 90%
-        pointBackgroundColor: spo2Data.data.map(value => value < 90 ? "red" : "rgb(59, 130, 246)"),
+        pointBackgroundColor: Array.isArray(spo2Data.data) && spo2Data.data.length > 0 && typeof spo2Data.data[0] === 'number' 
+          ? (spo2Data.data as number[]).map((value: number) => value < 90 ? "red" : "rgb(59, 130, 246)")
+          : undefined,
       }
     ];
 
     // Add professional event timeline track (if events exist and overlays enabled)
-    if (ahiResults && showEventOverlays && ahiResults.all_events.length > 0 && fileInfo && flowData?.labels) {
+    if (ahiResults && showEventOverlays && ahiResults.all_events.length > 0 && fileInfo && flowData?.labels && Array.isArray(flowData.labels)) {
       const eventTimelineData = createEventTimelineData(flowData.labels, ahiResults.all_events, fileInfo.startTime, currentEventIndex);
       
       // Add event timeline as mixed chart type
@@ -1358,14 +1287,14 @@ const chartJSData = useMemo(() => {
     // Max/min data points are not needed in AHI mode - removed for cleaner medical visualization
 
     console.log('[DEBUG] AHI chart data created:', {
-      labelsLength: flowData.labels.length,
+      labelsLength: flowData.labels?.length || 0,
       datasetsCount: datasets.length,
       datasetLabels: datasets.map(d => d.label)
     });
 
     return {
       labels: flowData.labels, // Use flow labels as primary timeline
-      datasets,
+      datasets: datasets as any, // Type assertion for Chart.js compatibility
     };
   }
 
@@ -1434,124 +1363,56 @@ const chartJSData = useMemo(() => {
 
     return {
       labels: chartDataState.labels,
-      datasets,
+      datasets: datasets as any, // Type assertion for Chart.js compatibility
     };
   }
 
   // MULTI CHANNEL MODE
-  // Always synthesize shared labels from viewport if available to ensure alignment
-  const firstChannel = selectedChannels[0];
-  let sharedLabels: Date[] = [];
-  if (viewport && fileInfo && firstChannel) {
-    // Prefer length from first channel data, else from any non-empty channel
-    let n = channelData[firstChannel]?.data?.length || 0;
-    if (n === 0) {
-      for (const ch of selectedChannels) {
-        n = channelData[ch]?.data?.length || 0;
-        if (n > 0) break;
-      }
-    }
-    if (n > 0) {
-      const base = new Date(fileInfo.startTime);
-      const range = viewport.end - viewport.start;
-      sharedLabels = Array.from({ length: n }, (_, i) =>
-        addSeconds(base, viewport.start + (i * range) / n)
-      );
-    }
-  } else {
-    // Fallback: use first available labels
-    for (const ch of selectedChannels) {
-      const lbls = channelData[ch]?.labels;
-      if (lbls && lbls.length > 0) { sharedLabels = lbls; break; }
-    }
-  }
+  // Use {x: Date, y: number} format for proper time-based positioning
   const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
 
-  const datasets = selectedChannels.map((channel, index) => {
-      const data = channelData[channel]?.data || [];
-      const isSpo2 = channel.toLowerCase().includes("spo2");
-
-      const pointColors = isSpo2
-        ? data.map(value => value < 90 ? "red" : "blue")
-        : [];
-
-      return {
-        label: channel,
-        data,
-        borderColor: colors[index % colors.length],
-        backgroundColor: `${colors[index % colors.length]}33`,
-        tension: 0.4,
-      pointRadius: isSpo2 ? 1 : 0,
-        pointBackgroundColor: isSpo2 ? pointColors : undefined,
-        borderWidth: 1,
-        yAxisID: `y-${index}`, // ako koristiš više y-osi
-      };
-  });
-
-  // Add max/min data points for each channel if enabled and data exists
-  if (showMaxMinMarkers && maxMinData.allChannels && fileInfo) {
-    const startTime = new Date(fileInfo.startTime);
-    
-    // Add max/min points for each channel
-    Object.entries(maxMinData.allChannels).forEach(([channel, data]) => {
-      const channelData = data as {
-        max: { value: number; time: number };
-        min: { value: number; time: number };
-      };
-      
-      // Add MAX data point for this channel
-      if (viewport && channelData.max && channelData.max.time >= viewport.start && channelData.max.time <= viewport.end) {
-        const maxTime = addSeconds(startTime, channelData.max.time);
-        const maxDataset = {
-          label: `MAX: ${channelData.max.value.toFixed(2)} (${channel})`,
-          data: [{ x: maxTime, y: channelData.max.value }],
-          borderColor: '#10B981',
-          backgroundColor: '#10B981',
-          pointRadius: 4,
-          pointHoverRadius: 6,
-          pointBorderWidth: 1,
-          pointBorderColor: '#ffffff',
-          pointBackgroundColor: '#10B981',
-          showLine: false,
-          yAxisID: `y-${selectedChannels.indexOf(channel)}`,
-        };
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (datasets as any).push(maxDataset);
-      }
-      
-      // Add MIN data point for this channel
-      if (viewport && channelData.min && channelData.min.time >= viewport.start && channelData.min.time <= viewport.end) {
-        const minTime = addSeconds(startTime, channelData.min.time);
-        const minDataset = {
-          label: `MIN: ${channelData.min.value.toFixed(2)} (${channel})`,
-          data: [{ x: minTime, y: channelData.min.value }],
-          borderColor: '#EF4444',
-          backgroundColor: '#EF4444',
-          pointRadius: 4,
-          pointHoverRadius: 6,
-          pointBorderWidth: 1,
-          pointBorderColor: '#ffffff',
-          pointBackgroundColor: '#EF4444',
-          showLine: false,
-          yAxisID: `y-${selectedChannels.indexOf(channel)}`,
-        };
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (datasets as any).push(minDataset);
-      }
-    });
+  // Safety check for selectedChannels
+  if (!selectedChannels || selectedChannels.length === 0) {
+    return { labels: [], datasets: [] };
   }
 
   return {
-    labels: sharedLabels, //  SVI KANALE ISTI LABELS!
-    datasets,
+    datasets: selectedChannels.map((channel, index) => {
+      const chan = channelData[channel];
+      if (!chan || !chan.data) {
+        console.warn(`[DEBUG] No data for channel ${channel}`);
+        return null;
+      }
+      
+      const dataPoints = Array.isArray(chan.data) ? chan.data : []; // should be [{x: Date, y: number}, ...]
+      const isSpo2 = channel.toLowerCase().includes("spo2");
+
+      return {
+        label: channel,
+        data: dataPoints,
+        borderColor: colors[index % colors.length],
+        backgroundColor: `${colors[index % colors.length]}33`,
+        tension: 0.4,
+        pointRadius: isSpo2 ? 3 : 0,
+        pointBackgroundColor: isSpo2 && Array.isArray(dataPoints) && dataPoints.length > 0 && typeof dataPoints[0] === 'object' 
+          ? dataPoints.map((p: any) => (p.y < 90 ? "red" : "blue")) 
+          : undefined,
+        borderWidth: 1,
+        yAxisID: `y-${index}`,
+        parsing: {
+          xAxisKey: "x",
+          yAxisKey: "y",
+        },
+      };
+    }).filter(Boolean) as any, // Remove null entries and type assertion for Chart.js compatibility
   };
 }, [multiChannelMode, selectedChannels, channelData, chartDataState, selectedChannel, fileInfo, viewport, ahiMode, ahiFlowChannel, ahiSpo2Channel, ahiResults, showEventOverlays, currentEventIndex, showMaxMinMarkers, maxMinData]);
 
 
-  // Chart.js opcije s prilagođenom logikom zooma
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const chartOptions: any = useMemo(() => {
-  if (!fileInfo) return {};
+const chartOptions: ChartOptions<"line"> = useMemo(() => {
+  if (!fileInfo || (!selectedChannel && selectedChannels.length === 0)) return {};
+
+  const isMulti = multiChannelMode;
 
   const startTime = new Date(fileInfo.startTime).getTime();
 
@@ -1564,20 +1425,9 @@ const chartOptions: any = useMemo(() => {
     },
     scales: {
       x: {
-        type: 'time',
+        type: "time",
         time: {
-          unit: 'second',
-          stepSize: 1,
-          displayFormats: {
-            second: 'HH:mm:ss',
-            minute: 'HH:mm',
-            hour: 'HH:mm',
-            day: 'MM-DD',
-          },
-          tooltipFormat: 'HH:mm:ss',
-          // Improve time scale stability
-          round: 'second',
-          isoWeekday: false,
+          tooltipFormat: "HH:mm:ss.SSS",
         },
         adapters: {
           date: {
@@ -1586,61 +1436,32 @@ const chartOptions: any = useMemo(() => {
         },
         title: {
           display: true,
-          text: 'Time',
-        },
-        min: viewport && viewport.start !== undefined ? startTime + viewport.start * 1000 : undefined,
-        max: viewport && viewport.end !== undefined ? startTime + viewport.end * 1000 : undefined,
-        ticks: {
-          maxTicksLimit: 10,
-          autoSkip: true,
+          text: "Time",
         },
       },
+      // If you want separate y axes for each dataset, you can define them dynamically outside this useMemo
       y: {
-        type: 'linear',
-        display: true,
-        position: 'left',
-        title: {
-          display: true,
-          text: ahiMode ? 'Flow (Airflow)' : 'Amplitude',
-        },
+        title: { display: true, text: "Amplitude" },
       },
-      // Secondary Y-axis for SpO2 in AHI mode
-      ...(ahiMode ? {
-        y1: {
-          type: 'linear',
-          display: true,
-          position: 'right',
-          title: {
-            display: true,
-            text: 'SpO2 (%)',
-          },
-          min: 80,
-          max: 100,
-          grid: {
-            drawOnChartArea: false,
-          },
-        },
-        // Third Y-axis for professional event timeline
-        y2: {
-          type: 'linear',
-          display: false, // Hide axis labels for cleaner look
-          position: 'left',
-          min: 0,
-          max: 1,
-          grid: {
-            display: false, // No grid lines for timeline
-            drawOnChartArea: false,
-          },
-          ticks: {
-            display: false, // Hide tick marks
-          },
-        },
-      } : {}),
     },
     plugins: {
-      decimation: {
-        enabled: true,
-        algorithm: 'min-max',
+      tooltip: {
+        callbacks: {
+          title: (items: TooltipItem<"line">[]) => {
+            // items[0].parsed.x can be timestamp in ms or Date
+            const it = items[0];
+            const xVal = (it.parsed && (it.parsed as any).x) || (it.raw && ((it.raw as any).x ?? it.raw));
+            if (!xVal || !fileInfo) return it.label ?? "";
+            const ms = typeof xVal === "number" ? xVal : new Date(xVal).getTime();
+            const date = new Date(ms);
+            return date.toLocaleTimeString("en-US", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              fractionalSecondDigits: 3,
+            } as Intl.DateTimeFormatOptions);
+          },
+        },
       },
       // Professional AHI Event Annotations
       annotation: ahiMode && ahiResults && showEventOverlays ? {
@@ -1692,127 +1513,83 @@ const chartOptions: any = useMemo(() => {
             };
           })
       } : {},
-      tooltip: {
-        callbacks: {
-          title: (items: TooltipItem<'line'>[]) => {
-            const time = items[0].label;
-            return time;
-          },
-          label: (context: TooltipItem<'line'>) => {
-            // Enhanced tooltip for event timeline
-            if (context.dataset.label === 'Sleep Events' && context.parsed.y > 0) {
-              const timeLabel = context.label;
-              const time = new Date(timeLabel);
-              const startTime = new Date(fileInfo.startTime);
-              const secondsFromStart = (time.getTime() - startTime.getTime()) / 1000;
-              
-              // Find the event at this time
-              const event = ahiResults?.all_events.find(e => 
-                secondsFromStart >= e.start_time && secondsFromStart <= e.end_time
-              );
-              
-              if (event) {
-                return [
-                  `${event.type.toUpperCase()} Event`,
-                  `Time: ${formatEDFTimestamp(event.start_time)} - ${formatEDFTimestamp(event.end_time)}`,
-                  `Duration: ${event.duration.toFixed(1)}s`,
-                  event.spo2_drop ? `SpO2 Drop: ${event.spo2_drop.toFixed(1)}%` : ''
-                ].filter(Boolean);
-              }
-            }
-            
-            // Default tooltip for other datasets
-            return `${context.dataset.label}: ${context.parsed.y}`;
-          },
-        },
-        filter: (tooltipItem: TooltipItem<'line'>) => {
-          // Only show tooltip for Sleep Events if there's actually an event
-          if (tooltipItem.dataset.label === 'Sleep Events') {
-            return tooltipItem.parsed.y > 0;
-          }
-          return true;
-        },
-      },
       zoom: {
         pan: {
           enabled: true,
-          mode: 'x',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          mode: "x",
           onPanComplete: ({ chart }: { chart: any }) => {
-            const xScale = chart.scales['x'];
-            const startTime = new Date(fileInfo.startTime).getTime();
-            const start = (xScale.min as number - startTime) / 1000;
-            const end = (xScale.max as number - startTime) / 1000;
-
-            if (typeof start === 'number' && typeof end === 'number' && start < end) {
-              console.log(`[DEBUG] Pan complete: ${start}s to ${end}s`);
-              setViewport({ start, end });
-
-              if (multiChannelMode) {
-                debouncedFetchMultiChunks(start, end);
+            if (!fileInfo) return;
+            const xScale = chart.scales["x"];
+            const startMs = xScale.min as number;
+            const endMs = xScale.max as number;
+            const fileStartMs = new Date(fileInfo.startTime).getTime();
+            const startSec = (startMs - fileStartMs) / 1000;
+            const endSec = (endMs - fileStartMs) / 1000;
+            if (isNaN(startSec) || isNaN(endSec)) return;
+            setViewport({ start: startSec, end: endSec });
+            // call zoom handler
+            if (handleZoomOrPan) {
+              handleZoomOrPan(startSec, endSec);
+            }
+            if (isMulti) {
+              debouncedFetchMultiChunks(startSec, endSec);
               } else {
-                handleZoomOrPan(start, end);
-              }
+              // single-channel expects sample-based fetch
+              if (!selectedChannel) return;
+              const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
+              if (!sampleRate) return;
+              const fetchStart = Math.max(0, Math.floor(startSec * sampleRate));
+              const fetchNum = Math.max(1, Math.ceil((endSec - startSec) * sampleRate));
+              fetchDownsampledData(fileInfo.tempFilePath, selectedChannel, fetchStart, fetchNum, 2000, startSec, endSec);
             }
           },
         },
         zoom: {
           wheel: { enabled: true },
           pinch: { enabled: true },
-          mode: 'x',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          mode: "x",
           onZoomComplete: ({ chart }: { chart: any }) => {
-            const xScale = chart.scales['x'];
-            const startTime = new Date(fileInfo.startTime).getTime();
-            const start = (xScale.min as number - startTime) / 1000;
-            const end = (xScale.max as number - startTime) / 1000;
-
-            if (typeof start === 'number' && typeof end === 'number' && start < end) {
-              console.log(`[DEBUG] Zoom complete: ${start}s to ${end}s`);
-              setViewport({ start, end });
-
-              if (multiChannelMode) {
-                debouncedFetchMultiChunks(start, end);
+            if (!fileInfo) return;
+            const xScale = chart.scales["x"];
+            const startMs = xScale.min as number;
+            const endMs = xScale.max as number;
+            const fileStartMs = new Date(fileInfo.startTime).getTime();
+            const startSec = (startMs - fileStartMs) / 1000;
+            const endSec = (endMs - fileStartMs) / 1000;
+            if (isNaN(startSec) || isNaN(endSec)) return;
+            setViewport({ start: startSec, end: endSec });
+            if (handleZoomOrPan) {
+              handleZoomOrPan(startSec, endSec);
+            }
+            if (isMulti) {
+              debouncedFetchMultiChunks(startSec, endSec);
               } else {
-                handleZoomOrPan(start, end);
-              }
+              if (!selectedChannel) return;
+              const sampleRate = fileInfo.sampleRates[fileInfo.channels.indexOf(selectedChannel)];
+              if (!sampleRate) return;
+              const fetchStart = Math.max(0, Math.floor(startSec * sampleRate));
+              const fetchNum = Math.max(1, Math.ceil((endSec - startSec) * sampleRate));
+              fetchDownsampledData(fileInfo.tempFilePath, selectedChannel, fetchStart, fetchNum, 2000, startSec, endSec);
             }
           },
         },
       },
-      legend: { 
-        display: true,
-        position: 'top',
-        labels: {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          filter: (legendItem: any) => {
-            // Show more informative legend for AHI mode
-            return legendItem.text !== 'Sleep Events' || ahiMode;
-          },
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          generateLabels: (chart: any) => {
-            const defaultLabels = ChartJS.defaults.plugins.legend.labels.generateLabels(chart);
-            
-            // Add custom legend for event timeline in AHI mode
-            if (ahiMode && ahiResults && showEventOverlays) {
-              defaultLabels.push({
-                text: `Events: ${ahiResults.ahi_analysis.apnea_count} Apneas, ${ahiResults.ahi_analysis.hypopnea_count} Hypopneas`,
-                fillStyle: '#ef4444',
-                strokeStyle: '#dc2626',
-                lineWidth: 1,
-                hidden: false,
-                index: defaultLabels.length,
-                datasetIndex: defaultLabels.length,
-              });
-            }
-            
-            return defaultLabels;
-          },
-        },
-      },
+      legend: { display: true },
     },
   };
-}, [fileInfo, viewport, multiChannelMode, debouncedFetchMultiChunks, handleZoomOrPan, ahiMode, ahiResults, showEventOverlays, formatEDFTimestamp]);
+}, [
+  fileInfo,
+  selectedChannel,
+  selectedChannels,
+  multiChannelMode,
+  debouncedFetchMultiChunks,
+  handleZoomOrPan,
+  viewport,
+  ahiMode,
+  ahiResults,
+  fetchDownsampledData,
+  showEventOverlays,
+]);
 
 
 
