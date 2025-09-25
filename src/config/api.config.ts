@@ -5,9 +5,7 @@ export const apiConfig = {
   // Base URL for API calls
   // In development: uses the dev server proxy
   // In production: uses your Fly.io backend URL
-  baseURL: import.meta.env.PROD 
-    ? 'https://somnoviz-backend1.fly.dev/api'  // Your Fly.io URL
-    : '/api', // Development proxy
+  baseURL: 'https://somnoviz-backend1.fly.dev/api', // Always use production backend
   
   // Debug info
   isDev: !import.meta.env.PROD,
