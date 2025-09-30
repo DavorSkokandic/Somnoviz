@@ -78,6 +78,7 @@ type ModeSelectorProps = {
   setShowEventOverlays: (show: boolean) => void;
   navigateToEvent: (direction: 'next' | 'prev' | 'first' | 'last') => void;
   currentEventIndex: number;
+  handleFullNightView?: () => void;
 };
 
 const ModeSelector: React.FC<ModeSelectorProps> = ({
@@ -101,6 +102,7 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
   setShowEventOverlays,
   navigateToEvent,
   currentEventIndex,
+  handleFullNightView,
 }) => {
   // Helper function to convert seconds offset to actual EDF file timestamp (HH:MM:SS)
   const formatEDFTimestamp = (secondsFromStart: number): string => {
@@ -217,6 +219,20 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
             ))}
           </div>
           <p className="mt-2 text-sm text-gray-500">{selectedChannels.length}/5 channels selected</p>
+          
+          {/* Full Night View Button for Multi-Channel Mode */}
+          {selectedChannels.length > 0 && handleFullNightView && (
+            <div className="mt-4">
+              <button
+                onClick={handleFullNightView}
+                className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center space-x-2 shadow-sm hover:shadow-md"
+              >
+                <Eye className="w-4 h-4" />
+                <span>Show Full Night View</span>
+              </button>
+              <p className="mt-1 text-xs text-gray-500 text-center">Display all selected channels for the entire recording duration</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -350,10 +366,7 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
                     <span className="text-blue-700 font-semibold">AHI Analysis in Progress</span>
                   </div>
                   <p className="text-blue-600 text-sm">{ahiAnalysisProgress}</p>
-                  <div className="mt-2 flex items-center gap-2 text-xs text-blue-500">
-                    <Activity className="w-3 h-3" />
-                    <span>Professional medical-grade analysis using Python engine...</span>
-                  </div>
+                 
                 </div>
               </div>
             </div>

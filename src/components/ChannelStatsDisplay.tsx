@@ -16,7 +16,12 @@ type ChannelStatsDisplayProps = {
 const ChannelStatsDisplay: React.FC<ChannelStatsDisplayProps> = ({ channelStats }) => {
   if (!channelStats || Object.keys(channelStats).length === 0) return null;
 
-  const formatValue = (value: number): string => {
+  const formatValue = (value: number | undefined | null): string => {
+    // Handle undefined/null values
+    if (value === undefined || value === null || isNaN(value)) {
+      return 'N/A';
+    }
+    
     // Format values with appropriate precision
     if (Math.abs(value) < 0.01) {
       return value.toExponential(2);
@@ -59,7 +64,13 @@ const ChannelStatsDisplay: React.FC<ChannelStatsDisplayProps> = ({ channelStats 
 
   return (
     <div className="space-y-4">
-      {Object.entries(channelStats).map(([channel, stats]) => (
+      {Object.entries(channelStats).map(([channel, stats]) => {
+        // Safety check: ensure stats object has all required properties
+        if (!stats || typeof stats !== 'object') {
+          return null;
+        }
+        
+        return (
         <div key={channel} className="bg-gradient-to-br from-slate-50 to-slate-100 border border-slate-200 rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow duration-200">
           {/* Channel Header */}
           <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-200">
@@ -145,7 +156,8 @@ const ChannelStatsDisplay: React.FC<ChannelStatsDisplayProps> = ({ channelStats 
             </div>
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 };

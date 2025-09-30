@@ -21,10 +21,7 @@ const StatusDisplay: React.FC<StatusDisplayProps> = ({ loading, isLoadingChunk, 
               <span className="text-blue-700 font-semibold">Processing EDF File</span>
             </div>
             <p className="text-blue-600 text-sm">Analyzing signal data and extracting channel information</p>
-            <div className="mt-2 flex items-center gap-2 text-xs text-blue-500">
-              <Activity className="w-3 h-3" />
-              <span>Medical-grade analysis in progress...</span>
-            </div>
+          
           </div>
         </div>
       </div>

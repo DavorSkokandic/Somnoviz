@@ -5,7 +5,7 @@ import { apiConfig } from './api.config';
 // Create axios instance with proper timeout and error handling
 export const axiosInstance = axios.create({
   baseURL: apiConfig.baseURL,
-  timeout: 600000, // 10 minutes timeout for EDF processing (Render free tier is slower)
+  timeout: 900000, // 15 minutes timeout for AHI analysis (increased for large files)
   headers: {
     'Content-Type': 'application/json', // Default to JSON, override for file uploads
   },
@@ -55,7 +55,7 @@ axiosInstance.interceptors.response.use(
     console.error('[AXIOS RESPONSE ERROR]', error);
     
     if (error.code === 'ECONNABORTED') {
-      console.error('[AXIOS TIMEOUT] Request timed out after 10 minutes');
+      console.error('[AXIOS TIMEOUT] Request timed out after 15 minutes');
       error.message = 'Request timed out. The EDF file is large or the server is under heavy load. Please try with a smaller file or wait a few minutes and try again.';
     } else if (error.response?.status === 0) {
       console.error('[AXIOS NETWORK ERROR] Network error or CORS issue');
