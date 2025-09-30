@@ -1,5 +1,5 @@
-import React from 'react';
-import { TrendingUp, TrendingDown, BarChart3, Activity, Minus, Plus } from 'lucide-react';
+import React, { useState } from 'react';
+import { TrendingUp, TrendingDown, BarChart3, Activity, Minus, Plus, ChevronDown, ChevronUp } from 'lucide-react';
 
 type ChannelStats = {
   mean: number;
@@ -26,6 +26,7 @@ const ChannelStatsDisplay: React.FC<ChannelStatsDisplayProps> = ({
   selectedChannel = null,
   selectedChannels = []
 }) => {
+  const [isExpanded, setIsExpanded] = useState<boolean>(true);
   // Show loading state
   if (isLoading) {
     return (
@@ -133,18 +134,37 @@ const ChannelStatsDisplay: React.FC<ChannelStatsDisplayProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* Mode Indicator */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${mode === 'single' ? 'bg-amber-500' : 'bg-blue-500'}`}></div>
-          <span className="text-sm font-medium text-slate-600">
-            {mode === 'single' ? 'Single Channel Analysis' : 'Multi-Channel Analysis'}
-          </span>
-        </div>
-        <div className="text-xs text-slate-500">
-          {Object.keys(channelStats).length} channel{Object.keys(channelStats).length !== 1 ? 's' : ''} analyzed
+      {/* Collapsible Header */}
+      <div className="bg-gradient-to-br from-slate-50 to-slate-100 border border-slate-200 rounded-xl p-4 shadow-sm">
+        <div 
+          className="flex items-center justify-between cursor-pointer hover:bg-slate-100 rounded-lg p-2 -m-2 transition-colors"
+          onClick={() => setIsExpanded(!isExpanded)}
+        >
+          <div className="flex items-center gap-3">
+            <div className={`w-3 h-3 rounded-full ${mode === 'single' ? 'bg-amber-500' : 'bg-blue-500'}`}></div>
+            <div>
+              <span className="text-sm font-medium text-slate-600">
+                {mode === 'single' ? 'Single Channel Analysis' : 'Multi-Channel Analysis'}
+              </span>
+              <div className="text-xs text-slate-500">
+                {Object.keys(channelStats).length} channel{Object.keys(channelStats).length !== 1 ? 's' : ''} analyzed
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500">Click to {isExpanded ? 'collapse' : 'expand'}</span>
+            {isExpanded ? (
+              <ChevronUp className="w-4 h-4 text-slate-500" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-slate-500" />
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Collapsible Content */}
+      {isExpanded && (
+        <div className="space-y-4">
       
       {Object.entries(channelStats).map(([channel, stats]) => {
         // Safety check: ensure stats object has all required properties
@@ -264,6 +284,8 @@ const ChannelStatsDisplay: React.FC<ChannelStatsDisplayProps> = ({
         </div>
         );
       })}
+        </div>
+      )}
     </div>
   );
 };

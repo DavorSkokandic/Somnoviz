@@ -197,6 +197,7 @@ export default function EDFUpload() {
   const [selectedChannels, setSelectedChannels] = useState<string[]>([]); // Za višekanalni prikaz
   const [channelData, setChannelData] = useState<{ [channel: string]: ChannelData }>({}); // Za višekanalni prikaz
   const [channelStats, setChannelStats] = useState<Record<string, ChannelStats>>({});
+  const [fullFileStats, setFullFileStats] = useState<Record<string, ChannelStats>>({});
 
   // AHI Analysis Mode States
   const [ahiMode, setAhiMode] = useState<boolean>(false);
@@ -416,31 +417,16 @@ const fetchMultiChunks = useCallback(async (startSec: number, endSec: number) =>
       channelStats: result.channels?.map((ch: any) => ({ name: ch.name, hasStats: !!ch.stats }))
     });
     
-    if (result.stats) {
-      console.log('[DEBUG] Setting global stats:', result.stats);
-      setChannelStats(prev => ({ ...prev, ...result.stats }));
-    } else if (result.channels) {
-      // collect per-channel stats if present
-      const statsObj: Record<string, any> = {};
-      for (const chObj of result.channels) {
-        if (chObj.stats) {
-          console.log(`[DEBUG] Found stats for channel ${chObj.name}:`, chObj.stats);
-          statsObj[chObj.name] = chObj.stats;
-        }
-      }
-      if (Object.keys(statsObj).length) {
-        console.log('[DEBUG] Setting per-channel stats:', statsObj);
-        setChannelStats(prev => ({ ...prev, ...statsObj }));
-      } else {
-        console.log('[DEBUG] No stats found in any channel');
-      }
-    }
+    // NOTE: We do NOT update channelStats here because this function fetches chunk data
+    // The full file statistics should be fetched separately via fetchFullStats()
+    // and should remain constant regardless of the displayed data range
+    console.log('[DEBUG] Multi-channel chunk data loaded, but not updating statistics (use fetchFullStats for full file stats)');
   } catch (err) {
     console.error("Error fetching multi-channel chunk data:", err);
   } finally {
     setIsLoadingChunk(false);
   }
-}, [fileInfo, selectedChannels, setIsLoadingChunk, setChannelData, setChannelStats]);
+}, [fileInfo, selectedChannels, setIsLoadingChunk, setChannelData]);
 
 const debouncedFetchMultiChunks = useDebouncedCallback(fetchMultiChunks, 300);
 
@@ -448,20 +434,79 @@ const debouncedFetchMultiChunks = useDebouncedCallback(fetchMultiChunks, 300);
 const fetchFullStats = useCallback(async (channels: string[]) => {
   if (!fileInfo || channels.length === 0) return;
   
+  // Check if we already have full file stats for all requested channels
+  const missingChannels = channels.filter(ch => !fullFileStats[ch]);
+  if (missingChannels.length === 0) {
+    console.log('[DEBUG] Full file statistics already cached for all channels:', channels);
+    // Update channelStats with cached full file stats for display
+    const statsToShow: Record<string, ChannelStats> = {};
+    channels.forEach(ch => {
+      if (fullFileStats[ch]) {
+        statsToShow[ch] = fullFileStats[ch];
+      }
+    });
+    
+    // Filter to only show statistics for currently selected channels
+    const filteredStats: Record<string, ChannelStats> = {};
+    if (multiChannelMode) {
+      // In multi-channel mode, only show stats for selected channels
+      selectedChannels.forEach(ch => {
+        if (statsToShow[ch]) {
+          filteredStats[ch] = statsToShow[ch];
+        }
+      });
+    } else {
+      // In single-channel mode, show all stats
+      Object.assign(filteredStats, statsToShow);
+    }
+    
+    setChannelStats(filteredStats);
+    return;
+  }
+  
   try {
-    console.log('[DEBUG] Fetching full file statistics for channels:', channels);
+    console.log('[DEBUG] Fetching full file statistics for missing channels:', missingChannels);
     setIsLoadingChunk(true);
     
     const response = await axiosInstance.post(endpoints.fullStats, {
       filePath: fileInfo.tempFilePath,
-      channels: channels
+      channels: missingChannels
     });
     
     console.log('[DEBUG] Full stats response:', response.data);
     
     if (response.data && response.data.channels) {
-      setChannelStats(response.data.channels);
-      console.log('[DEBUG] Full statistics loaded for channels:', Object.keys(response.data.channels));
+      // Cache the full file stats
+      setFullFileStats(prev => ({ ...prev, ...response.data.channels }));
+      
+      // Update display stats with all requested channels (cached + newly fetched)
+      // Only show statistics for channels that are currently selected in multi-channel mode
+      const statsToShow: Record<string, ChannelStats> = {};
+      channels.forEach(ch => {
+        if (response.data.channels[ch]) {
+          statsToShow[ch] = response.data.channels[ch];
+        } else if (fullFileStats[ch]) {
+          statsToShow[ch] = fullFileStats[ch];
+        }
+      });
+      
+      // Filter to only show statistics for currently selected channels
+      const filteredStats: Record<string, ChannelStats> = {};
+      if (multiChannelMode) {
+        // In multi-channel mode, only show stats for selected channels
+        selectedChannels.forEach(ch => {
+          if (statsToShow[ch]) {
+            filteredStats[ch] = statsToShow[ch];
+          }
+        });
+      } else {
+        // In single-channel mode, show all stats
+        Object.assign(filteredStats, statsToShow);
+      }
+      
+      setChannelStats(filteredStats);
+      
+      console.log('[DEBUG] Full statistics loaded and cached for channels:', Object.keys(response.data.channels));
     }
   } catch (error) {
     console.error('[ERROR] Failed to fetch full statistics:', error);
@@ -469,11 +514,18 @@ const fetchFullStats = useCallback(async (channels: string[]) => {
   } finally {
     setIsLoadingChunk(false);
   }
-}, [fileInfo]);
+}, [fileInfo, fullFileStats, multiChannelMode, selectedChannels]); // Added fullFileStats, multiChannelMode, selectedChannels to dependencies
 
 // Function to fetch statistics for single channel mode
 const fetchSingleChannelStats = useCallback(async (channel: string) => {
   if (!fileInfo || !channel) return;
+  
+  // Check if we already have full file stats for this channel
+  if (fullFileStats[channel]) {
+    console.log('[DEBUG] Single channel statistics already cached for:', channel);
+    setChannelStats({ [channel]: fullFileStats[channel] });
+    return;
+  }
   
   try {
     console.log('[DEBUG] Fetching statistics for single channel:', channel);
@@ -487,8 +539,11 @@ const fetchSingleChannelStats = useCallback(async (channel: string) => {
     console.log('[DEBUG] Single channel stats response:', response.data);
     
     if (response.data && response.data.channels && response.data.channels[channel]) {
+      // Cache the full file stats
+      setFullFileStats(prev => ({ ...prev, [channel]: response.data.channels[channel] }));
+      // Update display stats
       setChannelStats({ [channel]: response.data.channels[channel] });
-      console.log('[DEBUG] Single channel statistics loaded for:', channel);
+      console.log('[DEBUG] Single channel statistics loaded and cached for:', channel);
     }
   } catch (error) {
     console.error('[ERROR] Failed to fetch single channel statistics:', error);
@@ -496,7 +551,7 @@ const fetchSingleChannelStats = useCallback(async (channel: string) => {
   } finally {
     setIsLoadingChunk(false);
   }
-}, [fileInfo]);
+}, [fileInfo, fullFileStats]); // Added fullFileStats to dependencies
 
 // NEW SIMPLIFIED APPROACH: Always use downsampling endpoint for consistency
 const handleZoomOrPan = useCallback(async (startTime: number, endTime: number) => {
@@ -1230,6 +1285,14 @@ useEffect(() => {
   setViewport({ start: 0, end: initialEndTime });
 }, [selectedChannel, fileInfo, handleZoomOrPan, ahiMode, ahiFlowChannel, ahiSpo2Channel]);
 
+// Effect to fetch statistics when selected channel changes in single-channel mode
+useEffect(() => {
+  if (!multiChannelMode && selectedChannel && fileInfo) {
+    console.log('[DEBUG] Selected channel changed in single-channel mode:', selectedChannel);
+    fetchSingleChannelStats(selectedChannel);
+  }
+}, [selectedChannel, multiChannelMode, fileInfo, fetchSingleChannelStats]);
+
 // Effect to set full night view when AHI results are available
 useEffect(() => {
   if (ahiMode && ahiResults && fileInfo && ahiResults.all_events.length > 0) {
@@ -1297,7 +1360,15 @@ useEffect(() => {
   const handleChannelSelect = (channel: string) => {
     if (selectedChannels.includes(channel)) {
       console.log(`[DEBUG] Removing channel ${channel} from selection`);
-      setSelectedChannels(selectedChannels.filter(ch => ch !== channel));
+      const newSelectedChannels = selectedChannels.filter(ch => ch !== channel);
+      setSelectedChannels(newSelectedChannels);
+      
+      // Remove statistics for the unselected channel
+      setChannelStats(prev => {
+        const newStats = { ...prev };
+        delete newStats[channel];
+        return newStats;
+      });
     } else {
       if (selectedChannels.length < 5) {
         console.log(`[DEBUG] Adding channel ${channel} to selection`);
@@ -2138,6 +2209,8 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
     setError(null);
     setFileInfo(null); // Resetirajte informacije
     setChartDataState(null); // Resetirajte graf
+    setChannelStats({}); // Clear statistics
+    setFullFileStats({}); // Clear cached full file statistics
 
     try {
       console.log("[DEBUG] Sending request to backend...");
@@ -2351,7 +2424,7 @@ function handleCustomInterval() {
                 <div className="flex items-center space-x-3">
                   <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center">
                     <Settings className="w-4 h-4 text-white" />
-                  </div>
+        </div>
                   <div>
                     <h2 className="text-lg font-semibold text-slate-900">Analysis Configuration</h2>
                     <p className="text-sm text-slate-500">Configure visualization and analysis parameters</p>
