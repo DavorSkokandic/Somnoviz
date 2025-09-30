@@ -32,6 +32,7 @@ export const endpoints = {
   edfMultiChunk: `/upload/edf-multi-chunk`,
   edfChunkDownsample: `/upload/edf-chunk-downsample`,
   maxMinValues: `/upload/max-min-values`,
+  fullStats: `/upload/full-stats`,
   ahiAnalysis: `/upload/ahi-analysis`,
   
   // Cleanup endpoints

@@ -402,7 +402,7 @@ const fetchMultiChunks = useCallback(async (startSec: number, endSec: number) =>
         });
         next[name] = {
           data: points,
-          sampleRate,
+      sampleRate,
           startTimeSec: start_time_sec,
         };
       }
@@ -443,6 +443,60 @@ const fetchMultiChunks = useCallback(async (startSec: number, endSec: number) =>
 }, [fileInfo, selectedChannels, setIsLoadingChunk, setChannelData, setChannelStats]);
 
 const debouncedFetchMultiChunks = useDebouncedCallback(fetchMultiChunks, 300);
+
+// Function to fetch full file statistics for accurate results
+const fetchFullStats = useCallback(async (channels: string[]) => {
+  if (!fileInfo || channels.length === 0) return;
+  
+  try {
+    console.log('[DEBUG] Fetching full file statistics for channels:', channels);
+    setIsLoadingChunk(true);
+    
+    const response = await axiosInstance.post(endpoints.fullStats, {
+      filePath: fileInfo.tempFilePath,
+      channels: channels
+    });
+    
+    console.log('[DEBUG] Full stats response:', response.data);
+    
+    if (response.data && response.data.channels) {
+      setChannelStats(response.data.channels);
+      console.log('[DEBUG] Full statistics loaded for channels:', Object.keys(response.data.channels));
+    }
+  } catch (error) {
+    console.error('[ERROR] Failed to fetch full statistics:', error);
+    // Don't show error to user, just log it - stats are optional
+  } finally {
+    setIsLoadingChunk(false);
+  }
+}, [fileInfo]);
+
+// Function to fetch statistics for single channel mode
+const fetchSingleChannelStats = useCallback(async (channel: string) => {
+  if (!fileInfo || !channel) return;
+  
+  try {
+    console.log('[DEBUG] Fetching statistics for single channel:', channel);
+    setIsLoadingChunk(true);
+    
+    const response = await axiosInstance.post(endpoints.fullStats, {
+      filePath: fileInfo.tempFilePath,
+      channels: [channel]
+    });
+    
+    console.log('[DEBUG] Single channel stats response:', response.data);
+    
+    if (response.data && response.data.channels && response.data.channels[channel]) {
+      setChannelStats({ [channel]: response.data.channels[channel] });
+      console.log('[DEBUG] Single channel statistics loaded for:', channel);
+    }
+  } catch (error) {
+    console.error('[ERROR] Failed to fetch single channel statistics:', error);
+    // Don't show error to user, just log it - stats are optional
+  } finally {
+    setIsLoadingChunk(false);
+  }
+}, [fileInfo]);
 
 // NEW SIMPLIFIED APPROACH: Always use downsampling endpoint for consistency
 const handleZoomOrPan = useCallback(async (startTime: number, endTime: number) => {
@@ -1047,6 +1101,15 @@ const handleModeSwitch = useCallback((mode: 'single' | 'multi' | 'ahi') => {
     case 'single':
       setMultiChannelMode(false);
       setAhiMode(false);
+      console.log('[DEBUG] Switching to single-channel mode');
+      // Clear multi-channel data
+      setChannelData({});
+      setSelectedChannels([]);
+      
+      // Fetch statistics for the currently selected single channel
+      if (selectedChannel) {
+        fetchSingleChannelStats(selectedChannel);
+      }
       break;
     case 'multi':
       console.log('[DEBUG] Switching to multi-channel mode');
@@ -1061,6 +1124,9 @@ const handleModeSwitch = useCallback((mode: 'single' | 'multi' | 'ahi') => {
         const end = fileInfo.duration;
         setViewport({ start, end });
         debouncedFetchMultiChunks(start, end);
+        
+        // Also fetch full file statistics for accurate results
+        fetchFullStats(selectedChannels);
       } else {
         console.log('[DEBUG] No selected channels for multi-channel mode, waiting for user selection');
       }
@@ -1140,7 +1206,7 @@ const handleModeSwitch = useCallback((mode: 'single' | 'multi' | 'ahi') => {
       }
       break;
   }
-}, [fileInfo, selectedChannels, channelData, fetchDownsampledData, debouncedFetchMultiChunks]);
+}, [fileInfo, selectedChannels, channelData, fetchDownsampledData, debouncedFetchMultiChunks, fetchFullStats, fetchSingleChannelStats, selectedChannel]);
 
 // Add missing useEffect for initial data loading
 useEffect(() => {
@@ -1246,6 +1312,9 @@ useEffect(() => {
           const end = fileInfo.duration;
           setViewport({ start, end });
           debouncedFetchMultiChunks(start, end);
+          
+          // Also fetch full file statistics for accurate results
+          fetchFullStats(newSelectedChannels);
         } else {
           console.log(`[DEBUG] Not fetching data - multiChannelMode: ${multiChannelMode}, hasFileInfo: ${!!fileInfo}`);
         }
@@ -1542,8 +1611,8 @@ const handleFullNightView = () => {
         
         console.log(`[DEBUG] Channel ${channel} data time range:`, {
           dataPointsCount: chan.data.length,
-          firstPointTime: new Date(firstPoint.x).toLocaleTimeString(),
-          lastPointTime: new Date(lastPoint.x).toLocaleTimeString(),
+          firstPointTime: new Date(firstPoint.x).toLocaleTimeString('en-US', { hour12: false }),
+          lastPointTime: new Date(lastPoint.x).toLocaleTimeString('en-US', { hour12: false }),
           firstPointSec: (firstTime - fileStartMs) / 1000,
           lastPointSec: (lastTime - fileStartMs) / 1000,
           expectedViewport: viewport
@@ -1760,6 +1829,7 @@ const chartOptions: ChartOptions<"line"> = useMemo(() => {
             const ms = typeof xVal === "number" ? xVal : new Date(xVal).getTime();
             const date = new Date(ms);
             return date.toLocaleTimeString("en-US", {
+              hour12: false,
               hour: "2-digit",
               minute: "2-digit",
               second: "2-digit",
@@ -2085,6 +2155,11 @@ const handleChartDoubleClick = useCallback((event: React.MouseEvent<HTMLCanvasEl
       const initialFileInfo = response.data;
       setFileInfo(initialFileInfo);  
       setSelectedChannel(initialFileInfo.channels[0]);
+      
+      // Fetch statistics for the initially selected channel
+      if (initialFileInfo.channels[0]) {
+        fetchSingleChannelStats(initialFileInfo.channels[0]);
+      }
 
       // Početno učitavanje preview podataka u graf
       if (initialFileInfo.previewData[initialFileInfo.channels[0]]) {
@@ -2315,30 +2390,38 @@ function handleCustomInterval() {
           </div>
   
           {/* Grafana-style Channel Statistics Panel */}
-          {Object.keys(channelStats).length > 0 && (
-            <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
-              <div className="border-b border-slate-200 px-6 py-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-amber-600 rounded-lg flex items-center justify-center">
-                      <BarChart3 className="w-4 h-4 text-white" />
-                    </div>
-                    <div>
-                      <h2 className="text-lg font-semibold text-slate-900">Channel Statistics</h2>
-                      <p className="text-sm text-slate-500">Statistical analysis of signal channels</p>
-                    </div>
+          <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
+            <div className="border-b border-slate-200 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-amber-600 rounded-lg flex items-center justify-center">
+                    <BarChart3 className="w-4 h-4 text-white" />
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></div>
-                    <span className="text-xs text-amber-600 font-medium">Computing</span>
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">Channel Statistics</h2>
+                    <p className="text-sm text-slate-500">
+                      {multiChannelMode ? 'Multi-channel statistical analysis' : 'Single-channel statistical analysis'}
+                    </p>
                   </div>
                 </div>
+                <div className="flex items-center space-x-2">
+                  <div className={`w-2 h-2 rounded-full animate-pulse ${isLoadingChunk ? 'bg-amber-500' : 'bg-green-500'}`}></div>
+                  <span className={`text-xs font-medium ${isLoadingChunk ? 'text-amber-600' : 'text-green-600'}`}>
+                    {isLoadingChunk ? 'Computing' : 'Ready'}
+                  </span>
+                </div>
               </div>
-              <div className="p-6">
-                <ChannelStatsDisplay channelStats={channelStats} />
-              </div>
-        </div>
-      )}
+            </div>
+            <div className="p-6">
+              <ChannelStatsDisplay 
+                channelStats={channelStats}
+                isLoading={isLoadingChunk}
+                mode={multiChannelMode ? 'multi' : 'single'}
+                selectedChannel={selectedChannel}
+                selectedChannels={selectedChannels}
+              />
+            </div>
+          </div>
 
           {/* Grafana-style Main Visualization Panel */}
           <div className="bg-white border border-slate-200 rounded-lg shadow-sm">
