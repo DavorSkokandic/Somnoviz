@@ -547,11 +547,11 @@ const fetchFullStats = useCallback(async (channels: string[]) => {
       }
     });
     
-    // Filter to only show statistics for currently selected channels
+    // Filter to only show statistics for the requested channels (not stale selectedChannels)
     const filteredStats: Record<string, ChannelStats> = {};
     if (multiChannelMode) {
-      // In multi-channel mode, only show stats for selected channels
-      selectedChannels.forEach(ch => {
+      // In multi-channel mode, only show stats for the requested channels
+      channels.forEach(ch => {
         if (statsToShow[ch]) {
           filteredStats[ch] = statsToShow[ch];
         }
@@ -581,7 +581,7 @@ const fetchFullStats = useCallback(async (channels: string[]) => {
       setFullFileStats(prev => ({ ...prev, ...response.data.channels }));
       
       // Update display stats with all requested channels (cached + newly fetched)
-      // Only show statistics for channels that are currently selected in multi-channel mode
+      // Only show statistics for the requested channels (not stale selectedChannels)
       const statsToShow: Record<string, ChannelStats> = {};
       channels.forEach(ch => {
         if (response.data.channels[ch]) {
@@ -591,11 +591,11 @@ const fetchFullStats = useCallback(async (channels: string[]) => {
         }
       });
       
-      // Filter to only show statistics for currently selected channels
+      // Filter to only show statistics for the requested channels
       const filteredStats: Record<string, ChannelStats> = {};
       if (multiChannelMode) {
-        // In multi-channel mode, only show stats for selected channels
-        selectedChannels.forEach(ch => {
+        // In multi-channel mode, only show stats for the requested channels
+        channels.forEach(ch => {
           if (statsToShow[ch]) {
             filteredStats[ch] = statsToShow[ch];
           }
@@ -615,7 +615,7 @@ const fetchFullStats = useCallback(async (channels: string[]) => {
   } finally {
     setIsLoadingChunk(false);
   }
-}, [fileInfo, fullFileStats, multiChannelMode, selectedChannels]); // Added fullFileStats, multiChannelMode, selectedChannels to dependencies
+}, [fileInfo, fullFileStats, multiChannelMode]); // Removed selectedChannels to avoid stale closure
 
 // Function to fetch statistics for single channel mode
 const fetchSingleChannelStats = useCallback(async (channel: string) => {
@@ -1469,12 +1469,24 @@ useEffect(() => {
       const newSelectedChannels = selectedChannels.filter(ch => ch !== channel);
       setSelectedChannels(newSelectedChannels);
       
-      // Remove statistics for the unselected channel
-      setChannelStats(prev => {
-        const newStats = { ...prev };
-        delete newStats[channel];
-        return newStats;
-      });
+      // Update statistics display for the new selection
+      if (multiChannelMode) {
+        // Filter statistics to only show currently selected channels
+        const filteredStats: Record<string, ChannelStats> = {};
+        newSelectedChannels.forEach(ch => {
+          if (fullFileStats[ch]) {
+            filteredStats[ch] = fullFileStats[ch];
+          }
+        });
+        setChannelStats(filteredStats);
+      } else {
+        // In single channel mode, just remove the unselected channel stats
+        setChannelStats(prev => {
+          const newStats = { ...prev };
+          delete newStats[channel];
+          return newStats;
+        });
+      }
     } else {
       if (selectedChannels.length < 5) {
         console.log(`[DEBUG] Adding channel ${channel} to selection`);
