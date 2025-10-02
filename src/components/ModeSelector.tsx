@@ -5,10 +5,6 @@ import {
   Settings,
   Stethoscope,
   Loader2,
-  ChevronFirst,
-  ChevronLast,
-  ChevronLeft,
-  ChevronRight,
   Eye,
   EyeOff,
   TrendingDown,
@@ -76,8 +72,7 @@ type ModeSelectorProps = {
   setAhiSpo2Channel: (channel: string) => void;
   handleAHIAnalysis: () => void;
   setShowEventOverlays: (show: boolean) => void;
-  navigateToEvent: (direction: 'next' | 'prev' | 'first' | 'last') => void;
-  currentEventIndex: number;
+  handleFullNightView?: () => void;
 };
 
 const ModeSelector: React.FC<ModeSelectorProps> = ({
@@ -99,29 +94,9 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
   setAhiSpo2Channel,
   handleAHIAnalysis,
   setShowEventOverlays,
-  navigateToEvent,
-  currentEventIndex,
+  handleFullNightView,
 }) => {
-  // Helper function to convert seconds offset to actual EDF file timestamp (HH:MM:SS)
-  const formatEDFTimestamp = (secondsFromStart: number): string => {
-    if (!fileInfo?.startTime) return '00:00:00';
-    
-    try {
-      // Parse the EDF start time and add the offset seconds
-      const startTime = new Date(fileInfo.startTime);
-      const actualTime = new Date(startTime.getTime() + (secondsFromStart * 1000));
-      
-      // Format as HH:MM:SS
-      const hours = actualTime.getHours().toString().padStart(2, '0');
-      const minutes = actualTime.getMinutes().toString().padStart(2, '0');
-      const seconds = actualTime.getSeconds().toString().padStart(2, '0');
-      
-      return `${hours}:${minutes}:${seconds}`;
-    } catch (error) {
-      console.error('[ERROR] Failed to format EDF timestamp:', error);
-      return '00:00:00';
-    }
-  };
+  // Event navigation moved to chart overlay for better UX
 
   const currentMode = ahiMode ? 'ahi' : multiChannelMode ? 'multi' : 'single';
   
@@ -217,6 +192,20 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
             ))}
           </div>
           <p className="mt-2 text-sm text-gray-500">{selectedChannels.length}/5 channels selected</p>
+          
+          {/* Full Night View Button for Multi-Channel Mode */}
+          {selectedChannels.length > 0 && handleFullNightView && (
+            <div className="mt-4">
+              <button
+                onClick={handleFullNightView}
+                className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-all duration-200 flex items-center justify-center space-x-2 shadow-sm hover:shadow-md"
+              >
+                <Eye className="w-4 h-4" />
+                <span>Show Full Night View</span>
+              </button>
+              <p className="mt-1 text-xs text-gray-500 text-center">Display all selected channels for the entire recording duration</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -350,10 +339,7 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
                     <span className="text-blue-700 font-semibold">AHI Analysis in Progress</span>
                   </div>
                   <p className="text-blue-600 text-sm">{ahiAnalysisProgress}</p>
-                  <div className="mt-2 flex items-center gap-2 text-xs text-blue-500">
-                    <Activity className="w-3 h-3" />
-                    <span>Professional medical-grade analysis using Python engine...</span>
-                  </div>
+                 
                 </div>
               </div>
             </div>
@@ -551,106 +537,7 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
                   </div>
                 </div>
 
-                {/* Professional Event Navigation Panel */}
-                {ahiResults.all_events.length > 0 && (
-                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center space-x-3">
-                        <Activity className="w-5 h-5 text-blue-600" />
-                        <div>
-                          <h5 className="text-sm font-semibold text-blue-900">Event Navigation</h5>
-                          <p className="text-xs text-blue-600">Navigate through detected sleep events</p>
-                        </div>
-                      </div>
-                      <div className="text-sm font-medium text-blue-700 bg-white px-3 py-1 rounded-full">
-                        {currentEventIndex + 1} of {ahiResults.all_events.length}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-center space-x-2">
-                      <button
-                        onClick={() => navigateToEvent('first')}
-                        disabled={currentEventIndex === 0}
-                        className="p-2 bg-white border border-blue-300 text-blue-600 rounded-md hover:bg-blue-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
-                        title="First Event"
-                      >
-                        <ChevronFirst className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => navigateToEvent('prev')}
-                        disabled={currentEventIndex === 0}
-                        className="p-2 bg-white border border-blue-300 text-blue-600 rounded-md hover:bg-blue-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
-                        title="Previous Event"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => navigateToEvent('next')}
-                        disabled={currentEventIndex === ahiResults.all_events.length - 1}
-                        className="p-2 bg-white border border-blue-300 text-blue-600 rounded-md hover:bg-blue-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
-                        title="Next Event"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => navigateToEvent('last')}
-                        disabled={currentEventIndex === ahiResults.all_events.length - 1}
-                        className="p-2 bg-white border border-blue-300 text-blue-600 rounded-md hover:bg-blue-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors"
-                        title="Last Event"
-                      >
-                        <ChevronLast className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    {/* Professional Current Event Info */}
-                    {ahiResults.all_events[currentEventIndex] && (
-                      <div className="mt-4 p-4 bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded-lg">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center space-x-3">
-                            <div
-                              className={`w-3 h-3 rounded-full ${
-                                ahiResults.all_events[currentEventIndex].type === 'apnea'
-                                  ? 'bg-red-500'
-                                  : 'bg-orange-500'
-                              }`}
-                            ></div>
-                            <span
-                              className={`px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide ${
-                                ahiResults.all_events[currentEventIndex].type === 'apnea'
-                                  ? 'bg-red-100 text-red-700 border border-red-200'
-                                  : 'bg-orange-100 text-orange-700 border border-orange-200'
-                              }`}
-                            >
-                              {ahiResults.all_events[currentEventIndex].type}
-                            </span>
-                            <span className="text-sm text-slate-600 font-medium">
-                              {ahiResults.all_events[currentEventIndex].severity} Severity
-                            </span>
-                          </div>
-                          <div className="text-xs text-slate-500 font-mono">
-                            {formatEDFTimestamp(ahiResults.all_events[currentEventIndex].start_time)} -{' '}
-                            {formatEDFTimestamp(ahiResults.all_events[currentEventIndex].end_time)}
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4 text-sm">
-                          <div className="flex items-center justify-between">
-                            <span className="text-slate-600">Duration:</span>
-                            <span className="font-semibold text-slate-900">
-                              {ahiResults.all_events[currentEventIndex].duration.toFixed(1)}s
-                            </span>
-                          </div>
-                          {ahiResults.all_events[currentEventIndex].spo2_drop && (
-                            <div className="flex items-center justify-between">
-                              <span className="text-slate-600">SpO2 Drop:</span>
-                              <span className="font-semibold text-red-600">
-                                {ahiResults.all_events[currentEventIndex].spo2_drop.toFixed(1)}%
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* Event Navigation moved to chart overlay for better UX */}
               </div>
             </div>
           )}
