@@ -8,7 +8,6 @@ import {
   X,
   Brain,
   Heart,
-  Stethoscope,
   Shield
 } from "lucide-react";
 import EDFUpload from "../components/EDFUpload";
@@ -62,16 +61,16 @@ export default function Home() {
             </a>*/}
           </nav>
 
-          {/* Right side - Medical badges */}
+          {/* Right side - Product badges */}
           <div className="ml-auto flex items-center space-x-4">
             <div className="hidden lg:flex items-center space-x-3">
               <div className="flex items-center space-x-1 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-xs font-medium">
                 <Shield className="h-3 w-3" />
-                <span>HIPAA Compliant</span>
+                <span>Secure Upload</span>
               </div>
               <div className="flex items-center space-x-1 px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-xs font-medium">
-                <Stethoscope className="h-3 w-3" />
-                <span>Medical Grade</span>
+                <Activity className="h-3 w-3" />
+                <span>Interactive Analysis</span>
               </div>
             </div>
           </div>
@@ -130,23 +129,23 @@ export default function Home() {
               <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent"> Analysis Platform</span>
             </h1>
             <p className="text-xl text-slate-600 mb-8 leading-relaxed">
-              Upload EDF recordings and explore sleep study data with professional-grade visualization tools, 
+              Upload EDF recordings and explore sleep study data with practical visualization tools, 
               AHI analysis, and comprehensive reporting capabilities.
             </p>
             
-            {/* Medical credibility indicators */}
+            {/* Product highlights */}
             <div className="flex flex-wrap justify-center gap-6 mb-8">
               <div className="flex items-center space-x-2 text-slate-600">
                 <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
-                <span className="text-sm font-medium">FDA Compliant Algorithms</span>
+                <span className="text-sm font-medium">Flexible Channel Selection</span>
               </div>
               <div className="flex items-center space-x-2 text-slate-600">
                 <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                <span className="text-sm font-medium">Clinical Grade Accuracy</span>
+                <span className="text-sm font-medium">Detailed Signal Visualization</span>
               </div>
               <div className="flex items-center space-x-2 text-slate-600">
                 <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                <span className="text-sm font-medium">AASM Standards</span>
+                <span className="text-sm font-medium">AHI Summary Insights</span>
               </div>
             </div>
           </div>
@@ -157,15 +156,15 @@ export default function Home() {
           <EDFUpload />
         </div>
 
-        {/* Footer with medical compliance info */}
+        {/* Footer */}
         <footer className="mt-16 pt-8 border-t border-slate-200">
           <div className="flex flex-col lg:flex-row justify-between items-center space-y-4 lg:space-y-0">
             <div className="flex items-center space-x-6 text-sm text-slate-500">
               <span>© 2025 SomnoViz. All rights reserved.</span>
               <span>•</span>
-              <span>HIPAA Compliant</span>
+              <span>Sleep Data Visualization</span>
               <span>•</span>
-              <span>SOC 2 Type II</span>
+              <span>Web Platform</span>
             </div>
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2 px-3 py-1 bg-slate-50 rounded-full">

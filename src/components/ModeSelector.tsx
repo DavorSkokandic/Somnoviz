@@ -229,7 +229,7 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
                 </div>
                 <div className="flex items-center space-x-2">
                   <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                  <span className="text-xs text-red-600 font-medium">Medical Analysis</span>
+                  <span className="text-xs text-red-600 font-medium">AHI Analysis</span>
                 </div>
               </div>
             </div>
@@ -238,7 +238,7 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
                 <div className="flex items-start space-x-3">
                   <AlertTriangle className="w-5 h-5 text-red-600 mt-0.5" />
                   <div>
-                    <p className="text-sm text-red-700 font-medium mb-1">Clinical Requirements</p>
+                    <p className="text-sm text-red-700 font-medium mb-1">Analysis Requirements</p>
                     <p className="text-sm text-red-600">
                       Requires both Flow (airflow) and SpO2 (oxygen saturation) channels for accurate analysis.
                     </p>
@@ -390,7 +390,7 @@ const ModeSelector: React.FC<ModeSelectorProps> = ({
                             {ahiResults.ahi_analysis.severity}
                           </div>
                           <div className="text-xs font-medium text-slate-600 uppercase tracking-wide">Severity Level</div>
-                          <div className="text-xs text-slate-500">Clinical Assessment</div>
+                          <div className="text-xs text-slate-500">Severity Band</div>
                         </div>
                       </div>
                       
