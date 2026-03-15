@@ -1074,7 +1074,7 @@ const handleAHIAnalysis = useCallback(async () => {
   const progressSteps = [
     "Initializing Python analysis engine...",
     "Loading full-resolution flow and SpO2 data...",
-    "Applying AASM clinical criteria...",
+    "Applying event scoring criteria...",
     "Detecting apnea events (≥90% flow reduction)...",
     "Detecting hypopnea events (30-90% flow reduction)...",
     "Analyzing oxygen desaturation patterns...",
