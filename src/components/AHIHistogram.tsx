@@ -29,14 +29,14 @@ const AHIHistogram: React.FC<AHIHistogramProps> = ({ events, binCount, showSepar
     }
 
     if (showSeparateTypes) {
-      // Separate histograms for apnea and hypopnea
+
       const apneaEvents = events.filter(e => e.type === 'apnea');
       const hypopneaEvents = events.filter(e => e.type === 'hypopnea');
       
       const apneaDurations = apneaEvents.map(e => e.duration);
       const hypopneaDurations = hypopneaEvents.map(e => e.duration);
       
-      // Use combined range for consistent binning
+
       const allDurations = events.map(e => e.duration);
       const min = Math.min(...allDurations);
       const max = Math.max(...allDurations);
@@ -227,7 +227,7 @@ const AHIHistogram: React.FC<AHIHistogramProps> = ({ events, binCount, showSepar
 
   return (
     <div className="space-y-4">
-      {/* Statistics Summary - Professional Style */}
+    
       {statistics && (
         <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
           <h5 className="text-sm font-semibold text-slate-200 mb-3 uppercase tracking-wide">Statistical Summary</h5>
@@ -252,7 +252,7 @@ const AHIHistogram: React.FC<AHIHistogramProps> = ({ events, binCount, showSepar
         </div>
       )}
       
-      {/* Chart */}
+      
       <div style={{ height: '400px' }}>
         <Bar data={histogramData} options={chartOptions} />
       </div>
