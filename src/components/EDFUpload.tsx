@@ -1991,11 +1991,15 @@ const handleFullNightView = () => {
      
      // Handle multi-channel mode: show min/max for each selected channel
      if (multiChannelMode && maxMinData.allChannels && viewport) {
-       Object.entries(maxMinData.allChannels).forEach(([channel, data]) => {
+       selectedChannels.forEach((channel, index) => {
+         const data = maxMinData.allChannels?.[channel];
+         if (!data) return;
+
          const channelData = data as {
            max: { value: number; time: number };
            min: { value: number; time: number };
          };
+         const channelYAxisID = `y-${index}`;
          
          // Add MAX data point for this channel
          if (channelData.max && channelData.max.time >= viewport.start && channelData.max.time <= viewport.end) {
@@ -2011,6 +2015,7 @@ const handleFullNightView = () => {
              pointBorderColor: '#ffffff',
              pointBackgroundColor: '#10B981',
              showLine: false,
+             yAxisID: channelYAxisID,
              pointHitRadius: 10, // Make points easier to click
              pointHoverBorderWidth: 2,
            };
@@ -2031,6 +2036,7 @@ const handleFullNightView = () => {
              pointBorderColor: '#ffffff',
              pointBackgroundColor: '#EF4444',
              showLine: false,
+             yAxisID: channelYAxisID,
              pointHitRadius: 10, // Make points easier to click
              pointHoverBorderWidth: 2,
            };
