@@ -2123,7 +2123,10 @@ const chartOptions: ChartOptions<"line"> = useMemo(() => {
   return {
     responsive: true,
     maintainAspectRatio: false,
-    animation: false,
+    animation: {
+      duration: 200,
+      easing: 'easeOutQuart',
+    },
     scales: {
       x: {
         type: "time",
