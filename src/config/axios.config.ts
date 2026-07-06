@@ -2,6 +2,13 @@
 import axios from 'axios';
 import { apiConfig } from './api.config';
 
+const ENABLE_AXIOS_DEBUG_LOGS = false;
+const debugLog = (...args: unknown[]) => {
+  if (ENABLE_AXIOS_DEBUG_LOGS) {
+    console.log(...args);
+  }
+};
+
 // Create axios instance with proper timeout and error handling
 export const axiosInstance = axios.create({
   baseURL: apiConfig.baseURL,
@@ -16,27 +23,27 @@ export const axiosInstance = axios.create({
 // Request interceptor for debugging
 axiosInstance.interceptors.request.use(
   (config) => {
-    console.log(`[AXIOS REQUEST] ${config.method?.toUpperCase()} ${config.url}`);
-    console.log('[AXIOS REQUEST] Base URL:', config.baseURL);
-    console.log('[AXIOS REQUEST] Full URL:', `${config.baseURL}${config.url}`);
-    console.log('[AXIOS REQUEST] Headers before:', config.headers);
-    console.log('[AXIOS REQUEST] Data type:', typeof config.data);
-    console.log('[AXIOS REQUEST] Data:', config.data);
+    debugLog(`[AXIOS REQUEST] ${config.method?.toUpperCase()} ${config.url}`);
+    debugLog('[AXIOS REQUEST] Base URL:', config.baseURL);
+    debugLog('[AXIOS REQUEST] Full URL:', `${config.baseURL}${config.url}`);
+    debugLog('[AXIOS REQUEST] Headers before:', config.headers);
+    debugLog('[AXIOS REQUEST] Data type:', typeof config.data);
+    debugLog('[AXIOS REQUEST] Data:', config.data);
     
     // Ensure Content-Type is set correctly for JSON requests (but NOT for FormData)
     if (config.data && typeof config.data === 'object' && !(config.data instanceof FormData)) {
       // Only set Content-Type if it's not already set or if it's not multipart
       if (!config.headers['Content-Type'] || config.headers['Content-Type'] === 'multipart/form-data') {
         config.headers['Content-Type'] = 'application/json';
-        console.log('[AXIOS REQUEST] Set Content-Type to application/json for JSON data');
+        debugLog('[AXIOS REQUEST] Set Content-Type to application/json for JSON data');
       }
     } else if (config.data instanceof FormData) {
       // For FormData, let axios set the Content-Type with boundary
       delete config.headers['Content-Type'];
-      console.log('[AXIOS REQUEST] Removed Content-Type header for FormData (let axios set with boundary)');
+      debugLog('[AXIOS REQUEST] Removed Content-Type header for FormData (let axios set with boundary)');
     }
     
-    console.log('[AXIOS REQUEST] Headers after:', config.headers);
+    debugLog('[AXIOS REQUEST] Headers after:', config.headers);
     return config;
   },
   (error) => {
@@ -48,7 +55,7 @@ axiosInstance.interceptors.request.use(
 // Response interceptor for debugging and error handling
 axiosInstance.interceptors.response.use(
   (response) => {
-    console.log(`[AXIOS RESPONSE] ${response.status} ${response.config.url}`);
+    debugLog(`[AXIOS RESPONSE] ${response.status} ${response.config.url}`);
     return response;
   },
   (error) => {
