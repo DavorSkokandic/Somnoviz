@@ -12,8 +12,8 @@ import {
   Title,
   Tooltip,
   Legend,
-  Chart, // Dodano Chart za pristup instanci grafa
-  type TooltipItem, // Dodano za tipovanje tooltip callbacka - type-only import
+  Chart,
+  type TooltipItem,
   type ChartOptions,
   type ChartDataset,
 } from "chart.js";
@@ -88,20 +88,23 @@ ChartJS.register(
 
 type EDFFileInfo = {
   channels: string[];
-  sampleRates: number[]; // Može biti više sample rate-ova
-  duration: number; // Ukupno trajanje u sekundama
+  sampleRates: number[];
+  duration: number;
   startTime: string;
   patientInfo: string;
   recordingInfo: string;
   previewData: { [channel: string]: number[] };
   diagnostics: { [channel: string]: { min: number; max: number; mean: number; num_samples: number; } };
-  tempFilePath: string; // Putanja do fajla na serveru (za dohvaćanje chunkova)
+  tempFilePath: string;
   originalFileName: string;
 };
 
 type ChartPoint = { x: Date; y: number };
 type LooseChartDataset = { label: string; data: unknown[]; [key: string]: unknown };
 type ChartInteractionElement = { datasetIndex: number; index: number };
+type PeakAnalysisSource = 'displayed' | 'raw';
+
+const PEAK_ANALYSIS_SOURCE: PeakAnalysisSource = 'displayed';
 
 type ChannelData = {
   labels?: Date[];
@@ -116,6 +119,17 @@ type ChannelStats = {
   min: number;
   max: number;
   stddev: number;
+};
+
+type PeakPoint = {
+  value: number;
+  time: number;
+  channel: string;
+};
+
+type ChannelPeakPair = {
+  max: Omit<PeakPoint, 'channel'>;
+  min: Omit<PeakPoint, 'channel'>;
 };
 
 type AHIEvent = {
@@ -732,14 +746,11 @@ const handleZoomOrPan = useCallback(async (startTime: number, endTime: number) =
 // Rolling window navigation for AHI events
 const [currentEventIndex, setCurrentEventIndex] = useState(0);
 
-// Max/Min finder state
+  // Max/Min finder state
   const [maxMinData, setMaxMinData] = useState<{
-    max: { value: number; time: number; channel: string } | null;
-    min: { value: number; time: number; channel: string } | null;
-    allChannels?: Record<string, {
-      max: { value: number; time: number };
-      min: { value: number; time: number };
-    }> | null;
+    max: PeakPoint | null;
+    min: PeakPoint | null;
+    allChannels?: Record<string, ChannelPeakPair> | null;
   }>({ max: null, min: null, allChannels: null });
   const [showMaxMinMarkers, setShowMaxMinMarkers] = useState<boolean>(true);
   const [showMaxMinSection, setShowMaxMinSection] = useState<boolean>(false);
@@ -873,6 +884,95 @@ const handleChartClick = useCallback((event: React.MouseEvent<HTMLCanvasElement,
   }
 }, [ahiMode, ahiResults, fileInfo, selectEventByClick]);
 
+const calculateDisplayedMaxMinValues = useCallback((): boolean => {
+  if (!fileInfo) return false;
+
+  const fileStartMs = new Date(fileInfo.startTime).getTime();
+  const isWithinViewport = (time: number) => (
+    !viewport || (time >= viewport.start && time <= viewport.end)
+  );
+
+  const updatePeakPair = (
+    current: { max: PeakPoint | null; min: PeakPoint | null },
+    point: PeakPoint
+  ) => ({
+    max: !current.max || point.value > current.max.value ? point : current.max,
+    min: !current.min || point.value < current.min.value ? point : current.min,
+  });
+
+  if (multiChannelMode) {
+    const displayedPeaks: Record<string, ChannelPeakPair> = {};
+
+    selectedChannels.forEach((channel) => {
+      const points = channelData[channel]?.data ?? [];
+      const channelPeaks: { max: PeakPoint | null; min: PeakPoint | null } = {
+        max: null,
+        min: null,
+      };
+
+      points.forEach((point) => {
+        const time = (new Date(point.x).getTime() - fileStartMs) / 1000;
+        if (!Number.isFinite(point.y) || !Number.isFinite(time) || !isWithinViewport(time)) return;
+
+        const next = updatePeakPair(channelPeaks, {
+          value: point.y,
+          time,
+          channel,
+        });
+        channelPeaks.max = next.max;
+        channelPeaks.min = next.min;
+      });
+
+      if (channelPeaks.max && channelPeaks.min) {
+        displayedPeaks[channel] = {
+          max: { value: channelPeaks.max.value, time: channelPeaks.max.time },
+          min: { value: channelPeaks.min.value, time: channelPeaks.min.time },
+        };
+      }
+    });
+
+    if (Object.keys(displayedPeaks).length === 0) {
+      setMaxMinData({ max: null, min: null, allChannels: null });
+      return false;
+    }
+
+    setMaxMinData({ max: null, min: null, allChannels: displayedPeaks });
+    return true;
+  }
+
+  if (!selectedChannel || !chartDataState?.data?.length) {
+    setMaxMinData({ max: null, min: null, allChannels: null });
+    return false;
+  }
+
+  const displayedPeaks: { max: PeakPoint | null; min: PeakPoint | null } = {
+    max: null,
+    min: null,
+  };
+
+  chartDataState.data.forEach((value, index) => {
+    const label = chartDataState.labels[index];
+    const time = label ? (new Date(label).getTime() - fileStartMs) / 1000 : NaN;
+    if (!Number.isFinite(value) || !Number.isFinite(time) || !isWithinViewport(time)) return;
+
+    const next = updatePeakPair(displayedPeaks, {
+      value,
+      time,
+      channel: selectedChannel,
+    });
+    displayedPeaks.max = next.max;
+    displayedPeaks.min = next.min;
+  });
+
+  if (!displayedPeaks.max || !displayedPeaks.min) {
+    setMaxMinData({ max: null, min: null, allChannels: null });
+    return false;
+  }
+
+  setMaxMinData({ max: displayedPeaks.max, min: displayedPeaks.min, allChannels: null });
+  return true;
+}, [fileInfo, viewport, multiChannelMode, selectedChannels, channelData, selectedChannel, chartDataState]);
+
 // Function to find max/min values from backend (raw data)
 const findMaxMinValues = useCallback(async () => {
   if (!fileInfo) return;
@@ -880,6 +980,11 @@ const findMaxMinValues = useCallback(async () => {
   // Skip max/min calculation in AHI mode as it's not needed
   if (ahiMode) {
     console.log('[DEBUG] Skipping max/min values calculation in AHI mode');
+    return;
+  }
+
+  if (PEAK_ANALYSIS_SOURCE === 'displayed') {
+    calculateDisplayedMaxMinValues();
     return;
   }
   
@@ -975,7 +1080,17 @@ const findMaxMinValues = useCallback(async () => {
   } catch (error) {
     console.error('[ERROR] Failed to get max/min values from backend:', error);
   }
-}, [fileInfo, ahiMode, ahiFlowChannel, ahiSpo2Channel, multiChannelMode, selectedChannels, selectedChannel, viewport]);
+}, [
+  fileInfo,
+  ahiMode,
+  ahiFlowChannel,
+  ahiSpo2Channel,
+  multiChannelMode,
+  selectedChannels,
+  selectedChannel,
+  viewport,
+  calculateDisplayedMaxMinValues,
+]);
 
 // Function to navigate to max/min value
 const navigateToMaxMin = useCallback((type: 'max' | 'min') => {
