@@ -37,6 +37,13 @@ const getDisplayTargetPoints = (timeRangeSeconds: number): number => {
   return 600;
 };
 
+const ENABLE_DEBUG_LOGS = false;
+const debugLog = (...args: unknown[]) => {
+  if (ENABLE_DEBUG_LOGS) {
+    console.log(...args);
+  }
+};
+
 const formatTimeInputValue = (date: Date): string => {
   const hours = date.getHours().toString().padStart(2, "0");
   const minutes = date.getMinutes().toString().padStart(2, "0");
@@ -464,11 +471,11 @@ const fetchMultiChunks = useCallback(async (startSec: number, endSec: number, ch
       max_points: target_points, // Fixed: use max_points instead of target_points
     };
 
-    console.log('[DEBUG] Multi-channel request params:', params);
+    debugLog('[DEBUG] Multi-channel request params:', params);
     const resp = await axiosInstance.get(endpoints.edfMultiChunk, { params });
 
     if (requestId !== multiRequestIdRef.current) {
-      console.log('[DEBUG] Ignoring stale multi-channel response:', {
+      debugLog('[DEBUG] Ignoring stale multi-channel response:', {
         requestId,
         currentRequestId: multiRequestIdRef.current,
         channelsToFetch
@@ -476,9 +483,9 @@ const fetchMultiChunks = useCallback(async (startSec: number, endSec: number, ch
       return;
     }
 
-    console.log('[DEBUG] Multi-channel raw response:', resp.data);
-    console.log('[DEBUG] Response type:', typeof resp.data);
-    console.log('[DEBUG] Response keys:', Object.keys(resp.data || {}));
+    debugLog('[DEBUG] Multi-channel raw response:', resp.data);
+    debugLog('[DEBUG] Response type:', typeof resp.data);
+    debugLog('[DEBUG] Response keys:', Object.keys(resp.data || {}));
 
     // expect resp.data structure: { channels: [ { name, data: [...], sample_rate, start_time_sec, stats? }, ... ] }
     const result = resp.data;
@@ -487,8 +494,8 @@ const fetchMultiChunks = useCallback(async (startSec: number, endSec: number, ch
       return;
     }
 
-    console.log('[DEBUG] Multi-channel result channels:', result.channels);
-    console.log('[DEBUG] Number of channels in result:', result.channels.length);
+    debugLog('[DEBUG] Multi-channel result channels:', result.channels);
+    debugLog('[DEBUG] Number of channels in result:', result.channels.length);
 
     // Build new channelData and stats
     setChannelData(prev => {
@@ -521,7 +528,7 @@ const fetchMultiChunks = useCallback(async (startSec: number, endSec: number, ch
     });
 
     // Stats (optional)
-    console.log('[DEBUG] Checking for stats in multi-channel response:', { 
+    debugLog('[DEBUG] Checking for stats in multi-channel response:', {
       hasGlobalStats: !!result.stats, 
       channelsCount: result.channels?.length,
       channelStats: result.channels?.map((ch: { name: string; stats?: unknown }) => ({ name: ch.name, hasStats: !!ch.stats }))
@@ -530,7 +537,7 @@ const fetchMultiChunks = useCallback(async (startSec: number, endSec: number, ch
     // NOTE: We do NOT update channelStats here because this function fetches chunk data
     // The full file statistics should be fetched separately via fetchFullStats()
     // and should remain constant regardless of the displayed data range
-    console.log('[DEBUG] Multi-channel chunk data loaded, but not updating statistics (use fetchFullStats for full file stats)');
+    debugLog('[DEBUG] Multi-channel chunk data loaded, but not updating statistics (use fetchFullStats for full file stats)');
   } catch (err) {
     console.error("Error fetching multi-channel chunk data:", err);
   } finally {
@@ -1766,7 +1773,7 @@ const handleFullNightView = () => {
       return null;
     }
 
-    console.log('[DEBUG] AHI mode using multi-channel data format:', {
+    debugLog('[DEBUG] AHI mode using multi-channel data format:', {
       ahiFlowChannel,
       ahiSpo2Channel,
       flowDataLength: flowData.data.length,
@@ -1805,7 +1812,7 @@ const handleFullNightView = () => {
       }
     ];
 
-    console.log('[DEBUG] AHI mode chartJSData generated using multi-channel approach:', {
+    debugLog('[DEBUG] AHI mode chartJSData generated using multi-channel approach:', {
       labelsLength: flowData.labels?.length || 0,
       datasetsCount: datasets.length,
       datasetLabels: datasets.map(d => d.label)
@@ -1894,7 +1901,7 @@ const handleFullNightView = () => {
   // Use {x: Date, y: number} format for proper time-based positioning
   const colors = ["#3B82F6", "#10B981", "#EF4444", "#F59E0B", "#8B5CF6"];
 
-  console.log('[DEBUG] Multi-channel chart data generation:', {
+  debugLog('[DEBUG] Multi-channel chart data generation:', {
     selectedChannels,
     selectedChannelsLength: selectedChannels?.length,
     channelDataKeys: Object.keys(channelData),
@@ -1916,7 +1923,7 @@ const handleFullNightView = () => {
         const lastTime = new Date(lastPoint.x).getTime();
         const fileStartMs = new Date(fileInfo?.startTime || 0).getTime();
         
-        console.log(`[DEBUG] Channel ${channel} data time range:`, {
+        debugLog(`[DEBUG] Channel ${channel} data time range:`, {
           dataPointsCount: chan.data.length,
           firstPointTime: new Date(firstPoint.x).toLocaleTimeString('en-US', { hour12: false }),
           lastPointTime: new Date(lastPoint.x).toLocaleTimeString('en-US', { hour12: false }),
@@ -1930,13 +1937,13 @@ const handleFullNightView = () => {
 
   // Safety check for selectedChannels
   if (!selectedChannels || selectedChannels.length === 0) {
-    console.log('[DEBUG] No selected channels for multi-channel mode');
+    debugLog('[DEBUG] No selected channels for multi-channel mode');
     return { labels: [] as string[], datasets: [] as ChartDataset<"line">[] };
   }
 
   const datasets = selectedChannels.map((channel, index) => {
       const chan = channelData[channel];
-      console.log(`[DEBUG] Processing channel ${channel}:`, {
+      debugLog(`[DEBUG] Processing channel ${channel}:`, {
         hasChannelData: !!chan,
         hasData: !!chan?.data,
         dataLength: chan?.data?.length,
@@ -1945,7 +1952,7 @@ const handleFullNightView = () => {
       });
       
       if (!chan || !chan.data || !Array.isArray(chan.data) || chan.data.length === 0) {
-        console.warn(`[DEBUG] No valid data for channel ${channel}`, {
+        debugLog(`[DEBUG] No valid data for channel ${channel}`, {
           hasChan: !!chan,
           hasData: !!chan?.data,
           isArray: Array.isArray(chan?.data),
@@ -2075,7 +2082,7 @@ const handleFullNightView = () => {
      }
    }
    
-   console.log('[DEBUG] Multi-channel datasets created:', {
+   debugLog('[DEBUG] Multi-channel datasets created:', {
      totalChannels: selectedChannels.length,
      validDatasets: validDatasets.length,
      datasetLabels: validDatasets.map(d => d?.label),
@@ -2116,10 +2123,7 @@ const chartOptions: ChartOptions<"line"> = useMemo(() => {
   return {
     responsive: true,
     maintainAspectRatio: false,
-    animation: {
-      duration: 200, // Short animation for smoother transitions
-      easing: 'easeOutQuart',
-    },
+    animation: false,
     scales: {
       x: {
         type: "time",
